@@ -168,7 +168,7 @@ export function openInstanceMenu(ev: MouseEvent) {
 		type: 'a',
 		text: i18n.ts.document,
 		icon: 'ti ti-bulb',
-		href: 'https://misskey-hub.net/docs/for-users/',
+		href: 'https://help.nijimiss.com/ja/help',
 		target: '_blank',
 	});
 
