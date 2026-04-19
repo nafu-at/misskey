@@ -60,6 +60,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 							<i v-else-if="appearNote.visibility === 'specified'" ref="specified" class="ti ti-mail"></i>
 						</span>
 						<span v-if="appearNote.localOnly" style="margin-left: 0.5em;" :title="i18n.ts._visibility['disableFederation']"><i class="ti ti-rocket-off"></i></span>
+						<span v-if="hasAiGeneratedFile"><i class="ti ti-file-ai"></i></span>
 					</div>
 				</div>
 				<div :class="$style.noteHeaderUsernameAndBadgeRoles">
@@ -307,6 +308,7 @@ const appearNote = computed(() => getAppearNote(note.value));
 const galleryEl = useTemplateRef('galleryEl');
 const isMyRenote = $i && ($i.id === note.value.userId);
 const showContent = ref(false);
+const hasAiGeneratedFile = computed(() => note.value.files?.some((file) => file.isAiGenerated) ?? false);
 const isDeleted = ref(false);
 const muted = ref($i ? checkWordMute(appearNote.value, $i, $i.mutedWords) : false);
 const translation = ref<Misskey.entities.NotesTranslateResponse | null>(null);
