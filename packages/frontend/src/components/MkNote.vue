@@ -37,7 +37,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 			</span>
 			<span v-if="note.localOnly" style="margin-left: 0.5em;" :title="i18n.ts._visibility['disableFederation']"><i class="ti ti-rocket-off"></i></span>
 			<span v-if="note.channel" style="margin-left: 0.5em;" :title="note.channel.name"><i class="ti ti-device-tv"></i></span>
-			<span v-if="hasAiGeneratedFile"><i class="ti ti-file-ai"></i></span>
 		</div>
 	</div>
 	<div v-if="renoteCollapsed" :class="$style.collapsedRenoteTarget">
@@ -293,7 +292,6 @@ const appearNote = computed(() => getAppearNote(note.value));
 const galleryEl = useTemplateRef('galleryEl');
 const isMyRenote = $i && ($i.id === note.value.userId);
 const showContent = ref(false);
-const hasAiGeneratedFile = computed(() => note.value.files?.some((file) => file.isAiGenerated) ?? false);
 const parsed = computed(() => appearNote.value.text ? mfm.parse(appearNote.value.text) : null);
 const urls = computed(() => parsed.value ? extractUrlFromMfm(parsed.value).filter((url) => appearNote.value.renote?.url !== url && appearNote.value.renote?.uri !== url) : null);
 const isLong = shouldCollapsed(appearNote.value, urls.value ?? []);

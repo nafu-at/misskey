@@ -34,12 +34,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 		</span>
 		<span v-if="note.localOnly" :title="i18n.ts._visibility['disableFederation']"><i class="ti ti-rocket-off"></i></span>
 		<span v-if="note.channel" :title="note.channel.name"><i class="ti ti-device-tv"></i></span>
+		<span v-if="hasAiGeneratedFile" style="margin-left: 0.5em;" :title="i18n.ts.aiGenerated"><i class="ti ti-file-ai"></i></span>
 	</div>
 </header>
 </template>
 
 <script lang="ts" setup>
-import { inject } from 'vue';
+import { computed, inject } from 'vue';
 import * as Misskey from 'misskey-js';
 import { i18n } from '@/i18n.js';
 import { notePage } from '@/filters/note.js';
@@ -47,11 +48,12 @@ import { userPage } from '@/filters/user.js';
 import { DI } from '@/di.js';
 import MkRoleBadgeIcon from '@/components/MkRoleBadgeIcon.vue';
 
-defineProps<{
+const props = defineProps<{
 	note: Misskey.entities.Note;
 }>();
 
 const mock = inject(DI.mock, false);
+const hasAiGeneratedFile = computed(() => props.note.files?.some((file) => file.isAiGenerated) ?? false);
 </script>
 
 <style lang="scss" module>
