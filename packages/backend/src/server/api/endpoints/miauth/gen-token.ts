@@ -5,7 +5,7 @@
 
 import { Inject, Injectable } from '@nestjs/common';
 import { Endpoint } from '@/server/api/endpoint-base.js';
-import type { AccessTokensRepository } from '@/models/_.js';
+import { MiAccessToken, MiUser, type AccessTokensRepository } from '@/models/_.js';
 import { IdService } from '@/core/IdService.js';
 import { NotificationService } from '@/core/NotificationService.js';
 import { secureRndstr } from '@/misc/secure-rndstr.js';
@@ -65,28 +65,32 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 		private notificationService: NotificationService,
 	) {
 		super(meta, paramDef, async (ps, me) => {
-			const currentCount = await accessTokensRepository.countBy({ userId: me.id });
-			if (currentCount >= (await this.roleService.getUserPolicies(me.id)).accessTokenLimit) {
-				throw new ApiError(meta.errors.tooManyAccessTokens);
-			}
-
-			// Generate access token
+			const { accessTokenLimit } = await this.roleService.getUserPolicies(me.id);
 			const accessToken = secureRndstr(32);
-
 			const now = new Date();
 
-			// Insert access token doc
-			await this.accessTokensRepository.insert({
-				id: this.idService.gen(now.getTime()),
-				lastUsedAt: now,
-				session: ps.session,
-				userId: me.id,
-				token: accessToken,
-				hash: accessToken,
-				name: ps.name,
-				description: ps.description,
-				iconUrl: ps.iconUrl,
-				permission: ps.permission,
+			await this.accessTokensRepository.manager.transaction(async (manager) => {
+				// Serialize issuance for this user, including their first token.
+				await manager.findOneOrFail(MiUser, {
+					select: { id: true },
+					where: { id: me.id },
+					lock: { mode: 'pessimistic_write' },
+				});
+				if (await manager.countBy(MiAccessToken, { userId: me.id }) >= accessTokenLimit) {
+					throw new ApiError(meta.errors.tooManyAccessTokens);
+				}
+				await manager.insert(MiAccessToken, {
+					id: this.idService.gen(now.getTime()),
+					lastUsedAt: now,
+					session: ps.session,
+					userId: me.id,
+					token: accessToken,
+					hash: accessToken,
+					name: ps.name,
+					description: ps.description,
+					iconUrl: ps.iconUrl,
+					permission: ps.permission,
+				});
 			});
 
 			// アクセストークンが生成されたことを通知

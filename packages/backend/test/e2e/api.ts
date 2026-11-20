@@ -14,6 +14,7 @@ import {
 	createAppToken,
 	failedApiCall,
 	relativeFetch,
+	role,
 	signup,
 	successfulApiCall,
 	uploadFile,
@@ -90,6 +91,20 @@ describe('API', () => {
 			assert.strictEqual(res.status, 200);
 			assert.strictEqual(res.body.nullableDefault, 'hello');
 		});
+	});
+
+	test('MiAuthの同時発行でもロールの上限を守り、失効後は再発行できる', async () => {
+		const user = await signup();
+		const limited = await role(alice, {}, {
+			accessTokenLimit: { useDefault: false, priority: 1, value: 1 },
+		});
+		await api('admin/roles/assign', { roleId: limited.id, userId: user.id }, alice);
+		const issue = () => api('miauth/gen-token', { session: null, permission: [] }, user);
+		const results = await Promise.all([issue(), issue()]);
+		assert.deepStrictEqual(results.map(result => result.status).sort(), [200, 400]);
+		const issuedToken = results.find(result => result.status === 200)!.body.token;
+		await api('i/revoke-token', { token: issuedToken }, user);
+		assert.strictEqual((await issue()).status, 200);
 	});
 
 	test('管理者専用のAPIのアクセス制限', async () => {
