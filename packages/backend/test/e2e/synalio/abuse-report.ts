@@ -102,6 +102,18 @@ describe('[シナリオ] ユーザ通報', () => {
 
 	// -------------------------------------------------------------------------------------------
 
+	test('通報が無効なロールでは通報できない', async () => {
+		const reporter = await signup();
+		const restricted = await role(admin, {}, {
+			allowReport: { useDefault: false, priority: 1, value: false },
+		});
+		const assigned = await api('admin/roles/assign', { userId: reporter.id, roleId: restricted.id }, admin);
+		expect(assigned.status).toBe(204);
+		const result = await api('users/report-abuse', { userId: alice.id, comment: 'test' }, reporter);
+		expect(result.status).toBe(403);
+		expect(result.body).toMatchObject({ error: { code: 'ROLE_PERMISSION_DENIED' } });
+	});
+
 	describe('SystemWebhook', () => {
 		beforeEach(async () => {
 			const webhooks = await api('admin/system-webhook/list', {}, admin);
