@@ -36,9 +36,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<MkUserCardMini :user="file.user"/>
 			</MkA>
 
-			<div>
-				<MkSwitch :modelValue="isSensitive" @update:modelValue="toggleSensitive">{{ i18n.ts.sensitive }}</MkSwitch>
-				<MkSwitch :modelValue="isAiGenerated" @update:modelValue="toggleAiGenerated">{{ i18n.ts.aiGenerated }}</MkSwitch>
+			<div class="_gaps">
+				<MkSwitch :modelValue="isSensitive" @update:modelValue="toggleSensitive">
+					<template #label>{{ i18n.ts.sensitive }}</template>
+				</MkSwitch>
+				<MkSwitch :modelValue="isAiGenerated" @update:modelValue="toggleAiGenerated">
+					<template #label>{{ i18n.ts.aiGenerated }}</template>
+				</MkSwitch>
 			</div>
 
 			<div>
