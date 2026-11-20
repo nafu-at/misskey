@@ -151,6 +151,8 @@ export class QueueService {
 		// 古いバージョンで作成され現在使われなくなったrepeatableジョブをクリーンアップ
 		this.systemQueue.getJobSchedulers().then(schedulers => {
 			for (const scheduler of schedulers) {
+				// BullMQ は一覧取得中に別のワーカーが削除したジョブを undefined として返すことがある。
+				if (scheduler == null) continue;
 				if (!REPEATABLE_SYSTEM_JOB_DEF.some(def => def.name === scheduler.key)) {
 					this.systemQueue.removeJobScheduler(scheduler.key);
 				}
