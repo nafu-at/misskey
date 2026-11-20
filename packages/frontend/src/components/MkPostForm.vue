@@ -1631,7 +1631,7 @@ onUnmounted(() => {
 	autocompleteHashtagsInput.value = null;
 });
 
-async function canClose() {
+async function canClose(askToSave = false) {
 	if (draftProcessing.value) return false;
 	if (!uploader.allItemsUploaded.value) {
 		const { canceled } = await os.confirm({
@@ -1644,7 +1644,7 @@ async function canClose() {
 	}
 
 	saveFormState();
-	if (retainFormState && lastSavedFormState != null && !posted.value && (text.value || files.value.length > 0 || poll.value || quoteId.value)) {
+	if (askToSave && retainFormState && lastSavedFormState != null && !posted.value && (text.value || files.value.length > 0 || poll.value || quoteId.value)) {
 		const { canceled } = await os.confirm({
 			type: 'question',
 			text: i18n.ts.saveDraftNote,

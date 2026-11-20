@@ -20,7 +20,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 		autofocus
 		freezeAfterPosted
 		@posting="onPosting" @postError="onPostError"
-		@cancel="_close()"
+		@cancel="_close(true)"
 		@esc="_close()"
 	/>
 </MkModal>
@@ -58,8 +58,8 @@ function onPostError() {
 	os.post(props);
 }
 
-async function _close() {
-	const canClose = await form.value?.canClose();
+async function _close(askToSave = false) {
+	const canClose = await form.value?.canClose(askToSave);
 	if (!canClose) return;
 	form.value?.abortUploader();
 	modal.value?.close();

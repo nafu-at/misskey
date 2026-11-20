@@ -58,6 +58,24 @@ test.describe('投稿フォームの入力保持', () => {
 		expect(draftRequests).toEqual([]);
 	});
 
+	test('閉じるボタンで書きかけの保存と破棄を選べる', async ({ page }) => {
+		const open = page.getByTestId('open-post-form');
+		const body = page.getByTestId('post-form-text');
+		const close = form(page).locator('header button:has(> i.ti-x)');
+		await open.click();
+		await body.fill('書きかけの本文');
+		await close.click();
+		await page.getByTestId('modal-dialog-ok').click();
+		await expect(body).toHaveCount(0);
+		await open.click();
+		await expect(body).toHaveValue('書きかけの本文');
+		await close.click();
+		await page.getByTestId('modal-dialog-cancel').click();
+		await expect(body).toHaveCount(0);
+		await open.click();
+		await expect(body).toHaveValue('');
+	});
+
 	test('通常投稿と返信先ごとに入力を分ける', async ({ page }) => {
 		const first = await api(BASE_URL, 'notes/create', { i: admin.token, text: '返信先その1' });
 		const second = await api(BASE_URL, 'notes/create', { i: admin.token, text: '返信先その2' });
