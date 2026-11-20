@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -->
 
 <template>
-<div :class="$style.wrapper" data-cy-signin-page-input>
+<div :class="$style.wrapper" data-testid="signin-page-input">
 	<div :class="$style.root">
 		<div v-if="!loginWithEmailAddress" :class="$style.avatar">
 			<i class="ti ti-user"></i>
@@ -32,7 +32,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 		<!-- username入力 -->
 		<form class="_gaps_s" @submit.prevent="emit('usernameSubmitted', username)">
-			<MkInput v-model="username" :placeholder="loginWithEmailAddress ? i18n.ts.emailAddress : i18n.ts.username" type="text" :pattern="loginWithEmailAddress ? '^[a-zA-Z0-9_@.]+$' : '^[a-zA-Z0-9_]+$'" :spellcheck="false" :autocomplete="loginWithEmailAddress ? 'email webauthn' : 'username webauthn'" autofocus data-cy-signin-username>
+			<MkInput v-model="username" :placeholder="loginWithEmailAddress ? i18n.ts.emailAddress : i18n.ts.username" type="text" :pattern="loginWithEmailAddress ? '^[a-zA-Z0-9_@.]+$' : '^[a-zA-Z0-9_]+$'" :spellcheck="false" :autocomplete="loginWithEmailAddress ? 'email webauthn' : 'username webauthn'" autofocus required data-testid="signin-username">
 				<template #prefix>
 					<i v-if="loginWithEmailAddress" class="ti ti-mail"></i>
 					<span v-else>@</span>
@@ -42,7 +42,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 					<button class="_textButton" type="button" tabindex="-1" @click="loginWithEmailAddress = !loginWithEmailAddress">{{ loginWithEmailAddress ? i18n.ts.usernameLogin : i18n.ts.emailAddressLogin }}</button>
 				</template>
 			</MkInput>
-			<MkButton type="submit" :disabled="loginWithEmailAddress ? !isEmailAddress : false" large primary rounded style="margin: 0 auto;" data-cy-signin-page-input-continue>{{ i18n.ts.continue }} <i class="ti ti-arrow-right"></i></MkButton>
+			<MkButton type="submit" :disabled="loginWithEmailAddress ? !isEmailAddress : false" large primary rounded style="margin: 0 auto;" data-testid="signin-page-input-continue">{{ i18n.ts.continue }} <i class="ti ti-arrow-right"></i></MkButton>
 		</form>
 
 		<div :class="$style.orHr">
@@ -72,12 +72,14 @@ import MkButton from '@/components/MkButton.vue';
 import MkInput from '@/components/MkInput.vue';
 import MkInfo from '@/components/MkInfo.vue';
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
 	message?: string,
 	openOnRemote?: OpenOnRemoteOptions,
+	initialUsername?: string;
 }>(), {
 	message: '',
 	openOnRemote: undefined,
+	initialUsername: undefined,
 });
 
 const isEmailAddress = computed(() => {
@@ -87,12 +89,12 @@ const isEmailAddress = computed(() => {
 
 const emit = defineEmits<{
 	(ev: 'usernameSubmitted', v: string): void;
-	(ev: 'passkeyClick', v: MouseEvent): void;
+	(ev: 'passkeyClick', v: PointerEvent): void;
 }>();
 
 const host = toUnicode(configHost);
 
-const username = ref('');
+const username = ref(props.initialUsername ?? '');
 
 const loginWithEmailAddress = ref(false);
 

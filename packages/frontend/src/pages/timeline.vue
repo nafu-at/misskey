@@ -4,30 +4,21 @@ SPDX-License-Identifier: AGPL-3.0-only
 -->
 
 <template>
-<PageWithHeader
-	ref="pageComponent" v-model:tab="src" :actions="headerActions"
-	:tabs="$i ? headerTabs : headerTabsWhenNotLogin" :swipable="true" :displayMyAvatar="true"
->
+<PageWithHeader v-model:tab="src" :actions="headerActions" :tabs="$i ? headerTabs : headerTabsWhenNotLogin" :swipable="true" :displayMyAvatar="true" :canOmitTitle="true">
 	<div class="_spacer" style="--MI_SPACER-w: 800px;">
-		<MkInfo
-			v-if="isBasicTimeline(src) && !store.r.timelineTutorials.value[src] && isDescriptionTimeline(src)"
-			style="margin-bottom: var(--MI-margin);" closable @close="closeTutorial()"
-		>
+		<MkTip v-if="isBasicTimeline(src)" :k="`tl.${src}`" style="margin-bottom: var(--MI-margin);">
 			{{ i18n.ts._timelineDescription[src] }}
-		</MkInfo>
+		</MkTip>
 		<MkPostForm
 			v-if="prefer.r.showFixedPostForm.value" :class="$style.postForm" class="_panel" fixed
 			:initialDimension="dimension"
 			style="margin-bottom: var(--MI-margin);"
 		/>
-		<div v-if="queue > 0" :class="$style.new">
-			<button class="_buttonPrimary" :class="$style.newButton" @click="top()">{{ i18n.ts.newNoteRecived }}</button>
-		</div>
-		<MkTimeline
+		<MkStreamingNotesTimeline
 			ref="tlComponent"
-			:key="src + withRenotes + withReplies + onlyFiles + withSensitive + dimension"
+			:key="src + withRenotes + withReplies + onlyFiles + withSensitive + withAiGenerated + dimension"
 			:class="$style.tl"
-			:src="src.split(':')[0] "
+			:src="(src.split(':')[0] as (BasicTimelineType | 'list'))"
 			:list="src.split(':')[1]"
 			:withRenotes="withRenotes"
 			:withReplies="withReplies"
@@ -36,7 +27,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 			:onlyFiles="onlyFiles"
 			:dimension="dimension"
 			:sound="true"
-			@queue="queueUpdated"
 		/>
 	</div>
 </PageWithHeader>
@@ -46,11 +36,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 import { computed, watch, provide, useTemplateRef, ref, onMounted, onActivated } from 'vue';
 import type { Tab } from '@/components/global/MkPageHeader.tabs.vue';
 import type { MenuItem } from '@/types/menu.js';
-import type PageWithHeader from '@/components/global/PageWithHeader.vue';
-import type { AllTimelineType, TimelinePageSrc } from '@/timelines.js';
-import { isDescriptionTimeline } from '@/timelines.js';
-import MkTimeline from '@/components/MkTimeline.vue';
-import MkInfo from '@/components/MkInfo.vue';
+import type { BasicTimelineType, TimelinePageSrc } from '@/timelines.js';
+import type { PageHeaderItem } from '@/types/page-header.js';
+import MkStreamingNotesTimeline from '@/components/MkStreamingNotesTimeline.vue';
 import MkPostForm from '@/components/MkPostForm.vue';
 import * as os from '@/os.js';
 import { store } from '@/store.js';
@@ -73,11 +61,8 @@ import {
 } from '@/timelines.js';
 import { prefer } from '@/preferences.js';
 
-provide('shouldOmitHeaderTitle', true);
-const tlComponent = useTemplateRef<InstanceType<typeof MkTimeline>>('tlComponent');
-const pageComponent = useTemplateRef<InstanceType<typeof PageWithHeader>>('pageComponent');
+const tlComponent = useTemplateRef('tlComponent');
 
-const queue = ref(0);
 const srcWhenNotSignin = ref<'local' | 'global'>(isAvailableBasicTimeline('local') ? 'local' : 'global');
 const src = computed<TimelinePageSrc>({
 	get: () => ($i ? store.r.tl.value.src : srcWhenNotSignin.value),
@@ -137,12 +122,8 @@ const withSensitive = computed<boolean>({
 });
 
 const withAiGenerated = computed<boolean>({
-	get: () => store.r.tl.value.filter.withAiGenerated,
+	get: () => store.r.tl.value.filter.withAiGenerated ?? true,
 	set: (x) => saveTlFilter('withAiGenerated', x),
-});
-
-watch(src, () => {
-	queue.value = 0;
 });
 
 watch(dimension, (value, previous) => {
@@ -156,17 +137,11 @@ async function pickDimension(): Promise<void> {
 	dimension.value = selected;
 }
 
-function queueUpdated(q: number): void {
-	queue.value = q;
-}
+const showFixedPostForm = prefer.model('showFixedPostForm');
 
-function top(): void {
-	if (pageComponent.value) pageComponent.value.scrollToTop();
-}
-
-async function chooseList(ev: MouseEvent): Promise<void> {
+async function chooseList(ev: PointerEvent): Promise<void> {
 	const lists = await userListsCache.fetch();
-	const items: MenuItem[] = [
+	const items: (MenuItem | undefined)[] = [
 		...lists.map(list => ({
 			type: 'link' as const,
 			text: list.name,
@@ -180,12 +155,12 @@ async function chooseList(ev: MouseEvent): Promise<void> {
 			to: '/my/lists',
 		},
 	];
-	os.popupMenu(items, ev.currentTarget ?? ev.target);
+	os.popupMenu(items.filter(i => i != null), ev.currentTarget ?? ev.target);
 }
 
-async function chooseAntenna(ev: MouseEvent): Promise<void> {
+async function chooseAntenna(ev: PointerEvent): Promise<void> {
 	const antennas = await antennasCache.fetch();
-	const items: MenuItem[] = [
+	const items: (MenuItem | undefined)[] = [
 		...antennas.map(antenna => ({
 			type: 'link' as const,
 			text: antenna.name,
@@ -200,12 +175,12 @@ async function chooseAntenna(ev: MouseEvent): Promise<void> {
 			to: '/my/antennas',
 		},
 	];
-	os.popupMenu(items, ev.currentTarget ?? ev.target);
+	os.popupMenu(items.filter(i => i != null), ev.currentTarget ?? ev.target);
 }
 
-async function chooseChannel(ev: MouseEvent): Promise<void> {
+async function chooseChannel(ev: PointerEvent): Promise<void> {
 	const channels = await favoritedChannelsCache.fetch();
-	const items: MenuItem[] = [
+	const items: (MenuItem | undefined)[] = [
 		...channels.map(channel => {
 			const lastReadedAt = miLocalStorage.getItemAsJson(`channelLastReadedAt:${channel.id}`) ?? null;
 			const hasUnreadNote = (lastReadedAt && channel.lastNotedAt) ? Date.parse(channel.lastNotedAt) > lastReadedAt : !!(!lastReadedAt && channel.lastNotedAt);
@@ -222,10 +197,10 @@ async function chooseChannel(ev: MouseEvent): Promise<void> {
 			type: 'link',
 			icon: 'ti ti-plus',
 			text: i18n.ts.createNew,
-			to: '/channels',
+			to: '/channels/new',
 		},
 	];
-	os.popupMenu(items, ev.currentTarget ?? ev.target);
+	os.popupMenu(items.filter(i => i != null), ev.currentTarget ?? ev.target);
 }
 
 function saveSrc(newSrc: TimelinePageSrc): void {
@@ -257,26 +232,7 @@ function saveTlDimension(value: number | null): void {
 		dimensionBySrc[src.value] = value;
 	}
 
-	const out = deepMerge({ dimensionBySrc }, store.s.tl);
-	store.set('tl', out);
-}
-
-// 使用されていない機能
-
-// async function timetravel(): Promise<void> {
-// 	const { canceled, result: date } = await os.inputDateTime({
-// 		title: i18n.ts.date,
-// 	});
-// 	if (canceled) return;
-//
-// 	tlComponent.value.timetravel(date);
-// }
-
-function closeTutorial(): void {
-	if (!isBasicTimeline(src.value)) return;
-	const before = store.s.timelineTutorials;
-	before[src.value] = true;
-	store.set('timelineTutorials', before);
+	store.set('tl', deepMerge({ dimensionBySrc }, store.s.tl));
 }
 
 function switchTlIfNeeded() {
@@ -292,77 +248,86 @@ onActivated(() => {
 	switchTlIfNeeded();
 });
 
-const headerActions = computed(() => {
-	const tmp = [
-		{
-			icon: 'ti ti-dots',
-			text: i18n.ts.options,
-			handler: (ev) => {
-				const menuItems: MenuItem[] = [];
+const headerActions = computed<PageHeaderItem[]>(() => {
+	const items: PageHeaderItem[] = [{
+		icon: 'ti ti-dots',
+		text: i18n.ts.options,
+		handler: (ev) => {
+			const menuItems: MenuItem[] = [];
 
-				if ($i && hasDimension(src.value)) {
-					menuItems.push({
-						icon: 'ti ti-cube',
-						text: i18n.tsx.dimensionWithNumber({ dimension: dimension.value }),
-						action: pickDimension,
-					});
-				}
+			if ($i && hasDimension(src.value)) {
+				menuItems.push({
+					icon: 'ti ti-cube',
+					text: i18n.tsx.dimensionWithNumber({ dimension: dimension.value }),
+					action: pickDimension,
+				});
+			}
 
+			menuItems.push({
+				type: 'switch',
+				icon: 'ti ti-repeat',
+				text: i18n.ts.showRenotes,
+				ref: withRenotes,
+			});
+
+			if (isBasicTimeline(src.value) && hasWithReplies(src.value)) {
 				menuItems.push({
 					type: 'switch',
-					text: i18n.ts.showRenotes,
-					ref: withRenotes,
+					icon: 'ti ti-messages',
+					text: i18n.ts.showRepliesToOthersInTimeline,
+					ref: withReplies,
+					disabled: onlyFiles,
 				});
+			}
 
-				if (isBasicTimeline(src.value) && hasWithReplies(src.value)) {
-					menuItems.push({
-						type: 'switch',
-						text: i18n.ts.showRepliesToOthersInTimeline,
-						ref: withReplies,
-						disabled: onlyFiles,
-					});
-				}
+			menuItems.push({
+				type: 'switch',
+				icon: 'ti ti-eye-exclamation',
+				text: i18n.ts.withSensitive,
+				ref: withSensitive,
+			}, {
+				type: 'switch',
+				icon: 'ti ti-robot',
+				text: i18n.ts.withAiGenerated,
+				ref: withAiGenerated,
+			}, {
+				type: 'switch',
+				icon: 'ti ti-photo',
+				text: i18n.ts.fileAttachedOnly,
+				ref: onlyFiles,
+				disabled: isBasicTimeline(src.value) && hasWithReplies(src.value) ? withReplies : false,
+			}, {
+				type: 'divider',
+			}, {
+				type: 'switch',
+				text: i18n.ts.showFixedPostForm,
+				ref: showFixedPostForm,
+			});
 
-				menuItems.push({
-					type: 'switch',
-					text: i18n.ts.withSensitive,
-					ref: withSensitive,
-				}, {
-					type: 'switch',
-					text: i18n.ts.withAiGenerated,
-					ref: withAiGenerated,
-				}, {
-					type: 'switch',
-					text: i18n.ts.fileAttachedOnly,
-					ref: onlyFiles,
-					disabled: isBasicTimeline(src.value) && hasWithReplies(src.value) ? withReplies : false,
-				});
-
-				os.popupMenu(menuItems, ev.currentTarget ?? ev.target);
-			},
+			os.popupMenu(menuItems, ev.currentTarget ?? ev.target);
 		},
-	];
+	}];
 
 	if (deviceKind === 'desktop') {
-		tmp.unshift({
+		items.unshift({
 			icon: 'ti ti-refresh',
 			text: i18n.ts.reload,
-			handler: (ev: Event) => {
+			handler: () => {
 				tlComponent.value?.reloadTimeline();
 			},
 		});
 
 		if ($i && hasDimension(src.value)) {
-			tmp.unshift({
+			items.unshift({
 				icon: 'ti ti-cube',
-				label: dimension.value,
 				text: i18n.tsx.dimensionWithNumber({ dimension: dimension.value }),
 				hideWhenNarrow: true,
 				handler: pickDimension,
 			});
 		}
 	}
-	return tmp;
+
+	return items;
 });
 
 const headerTabs = computed(() => [...(prefer.r.pinnedUserLists.value.map(l => ({
@@ -406,25 +371,6 @@ definePage(() => ({
 </script>
 
 <style lang="scss" module>
-.new {
-	position: sticky;
-	top: calc(var(--MI-stickyTop, 0px) + 16px);
-	z-index: 1000;
-	width: 100%;
-	margin: calc(-0.675em - 8px) 0;
-
-	&:first-child {
-		margin-top: calc(-0.675em - 8px - var(--MI-margin));
-	}
-}
-
-.newButton {
-	display: block;
-	margin: var(--MI-margin) auto 0 auto;
-	padding: 8px 16px;
-	border-radius: 32px;
-}
-
 .postForm {
 	border-radius: var(--MI-radius);
 }

@@ -4,11 +4,19 @@
  */
 
 import * as Misskey from 'misskey-js';
+import type { PostingLanguage } from '@/utility/langmap.js';
 
 export interface PostFormProps {
-	reply?: Misskey.entities.Note;
-	renote?: Misskey.entities.Note;
-	channel?: Misskey.entities.Channel; // TODO
+	reply?: Misskey.entities.Note | null;
+	renote?: Misskey.entities.Note | null;
+	channel?: {
+		id: string;
+		name: string;
+		color: string;
+		isSensitive: boolean;
+		allowRenoteToExternal: boolean;
+		userId: string | null;
+	} | null;
 	mention?: Misskey.entities.User;
 	specified?: Misskey.entities.UserDetailed;
 	initialText?: string;
@@ -18,6 +26,6 @@ export interface PostFormProps {
 	initialLocalOnly?: boolean;
 	initialDimension?: number | null;
 	initialVisibleUsers?: Misskey.entities.UserDetailed[];
-	initialNote?: Misskey.entities.Note;
+	initialNote?: Misskey.entities.Note & { lang?: PostingLanguage | null };
 	instant?: boolean;
 };

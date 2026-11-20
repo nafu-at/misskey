@@ -4,40 +4,45 @@
  */
 
 import cluster from 'node:cluster';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname } from 'node:path';
-import * as Sentry from '@sentry/node';
-import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import Logger from '@/logger.js';
 import { envOption } from '@/env.js';
 import { loadConfig } from '@/config.js';
-import { jobQueue, server } from './common.js';
+import type { Config } from '@/config.js';
+import { configureLogging, shutdownLogging } from '@/logging/logging-runtime.js';
+import { initTelemetry, shutdownTelemetry } from '@/core/telemetry/telemetry-registry.js';
+import { initExtraThreadPool, jobQueue, server } from './common.js';
+import { installShutdownSignalHandlers } from './shutdown-handler.js';
 
-const _filename = fileURLToPath(import.meta.url);
-const _dirname = dirname(_filename);
-
-const meta = JSON.parse(fs.readFileSync(`${_dirname}/../../../../built/meta.json`, 'utf-8'));
+const logger = new Logger('core', 'cyan');
+const bootLogger = logger.createSubLogger('boot', 'magenta');
 
 /**
  * Init worker process
  */
 export async function workerMain() {
-	const config = loadConfig();
-
-	if (config.sentryForBackend) {
-		Sentry.init({
-			release: meta.version,
-			integrations: [
-				...(config.sentryForBackend.enableNodeProfiling ? [nodeProfilingIntegration()] : []),
-			],
-
-			tracesSampleRate: 1,
-			profileSessionSampleRate: 1,
-			maxBreadcrumbs: 0,
-
-			...config.sentryForBackend.options,
-		});
+	let config: Config;
+	try {
+		config = loadConfig();
+		configureLogging(config.logging);
+		logger.info(`Start worker process... pid: ${process.pid}`);
+	} catch (e) {
+		bootLogger.error(e instanceof Error ? e : new Error(String(e)), null, true);
+		process.exit(1);
+		return;
 	}
+
+	initExtraThreadPool(config);
+
+	try {
+		await initTelemetry(config);
+	} catch (e) {
+		bootLogger.error(e instanceof Error ? e : new Error(String(e)), null, true);
+		process.exit(1);
+	}
+	installShutdownSignalHandlers({
+		shutdownTasks: [shutdownTelemetry, shutdownLogging],
+		onRegistered: message => bootLogger.info(message),
+	});
 
 	if (envOption.onlyServer) {
 		await server();

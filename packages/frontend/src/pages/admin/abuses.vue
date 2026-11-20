@@ -8,31 +8,22 @@ SPDX-License-Identifier: AGPL-3.0-only
 	<div class="_spacer" style="--MI_SPACER-w: 900px;">
 		<div v-if="tab === 'list'" :class="$style.root" class="_gaps">
 			<div :class="$style.subMenus" class="_gaps">
-				<MkButton link to="/admin/abuse-report-notification-recipient" primary>{{ i18n.ts.notificationSetting }}</MkButton>
+				<MkButton type="routerLink" to="/admin/abuse-report-notification-recipient" primary>{{ i18n.ts.notificationSetting }}</MkButton>
 			</div>
 
-			<MkInfo v-if="!store.r.abusesTutorial.value" closable @close="closeTutorial()">
+			<MkTip k="abuses">
 				{{ i18n.ts._abuseUserReport.resolveTutorial }}
-			</MkInfo>
+			</MkTip>
 
 			<div :class="$style.inputs" class="_gaps">
-				<MkSelect v-model="state" style="margin: 0; flex: 1;">
+				<MkSelect v-model="state" :items="stateDef" style="margin: 0; flex: 1;">
 					<template #label>{{ i18n.ts.state }}</template>
-					<option value="all">{{ i18n.ts.all }}</option>
-					<option value="unresolved">{{ i18n.ts.unresolved }}</option>
-					<option value="resolved">{{ i18n.ts.resolved }}</option>
 				</MkSelect>
-				<MkSelect v-model="targetUserOrigin" style="margin: 0; flex: 1;">
+				<MkSelect v-model="targetUserOrigin" :items="targetUserOriginDef" style="margin: 0; flex: 1;">
 					<template #label>{{ i18n.ts.reporteeOrigin }}</template>
-					<option value="combined">{{ i18n.ts.all }}</option>
-					<option value="local">{{ i18n.ts.local }}</option>
-					<option value="remote">{{ i18n.ts.remote }}</option>
 				</MkSelect>
-				<MkSelect v-model="reporterOrigin" style="margin: 0; flex: 1;">
+				<MkSelect v-model="reporterOrigin" :items="reporterOriginDef" style="margin: 0; flex: 1;">
 					<template #label>{{ i18n.ts.reporterOrigin }}</template>
-					<option value="combined">{{ i18n.ts.all }}</option>
-					<option value="local">{{ i18n.ts.local }}</option>
-					<option value="remote">{{ i18n.ts.remote }}</option>
 				</MkSelect>
 			</div>
 
@@ -41,13 +32,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<MkInput v-model="searchUsername" style="margin: 0; flex: 1;" type="text" :spellcheck="false">
 					<span>{{ i18n.ts.username }}</span>
 				</MkInput>
-				<MkInput v-model="searchHost" style="margin: 0; flex: 1;" type="text" :spellcheck="false" :disabled="pagination.params().origin === 'local'">
+				<MkInput v-model="searchHost" style="margin: 0; flex: 1;" type="text" :spellcheck="false" :disabled="paginator.computedParams.value.origin === 'local'">
 					<span>{{ i18n.ts.host }}</span>
 				</MkInput>
 			</div>
 			-->
 
-			<MkPagination v-slot="{items}" ref="reports" :pagination="pagination">
+			<MkPagination v-slot="{items}" :paginator="paginator">
 				<div class="_gaps">
 					<XAbuseReport v-for="report in (items)" :key="report.id" :report="report" @resolved="resolved"/>
 				</div>
@@ -63,7 +54,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 						</template>
 					</MkAbuseReportResolver>
 				</MkFolder>
-				<MkPagination v-slot="{items}" ref="resolverPagingComponent" :pagination="resolverPagination">
+				<MkPagination v-slot="{items}" :paginator="resolverPaginator">
 					<div v-for="resolver in items" :key="resolver.id" :class="$style.resolverList">
 						<MkAbuseReportResolver v-model="editingResolver" :data="(resolver as any)" :editable="editableResolver === resolver.id" class="_spacer" style=" --MI_SPACER-min: 14px; --MI_SPACER-max: 22px;">
 							<template #button>
@@ -85,7 +76,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 </template>
 
 <script lang="ts" setup>
-import { computed, useTemplateRef, ref } from 'vue';
+import { computed, markRaw, ref } from 'vue';
+import type * as Misskey from 'misskey-js';
 import MkSelect from '@/components/MkSelect.vue';
 import MkPagination from '@/components/MkPagination.vue';
 import MkFolder from '@/components/MkFolder.vue';
@@ -94,20 +86,27 @@ import XAbuseReport from '@/components/MkAbuseReport.vue';
 import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
 import { definePage } from '@/page.js';
+import { useMkSelect } from '@/composables/use-mkselect.js';
 import MkButton from '@/components/MkButton.vue';
-import MkInfo from '@/components/MkInfo.vue';
-import { store } from '@/store.js';
+import { Paginator } from '@/utility/paginator.js';
 
-const reports = useTemplateRef('reports');
-const resolverPagingComponent = ref<InstanceType<typeof MkPagination>>();
 const folderComponent = ref<InstanceType<typeof MkFolder>>();
 
-const state = ref('unresolved');
-const reporterOrigin = ref('combined');
-const targetUserOrigin = ref('combined');
 const tab = ref('list');
 const editableResolver = ref<null | string>(null);
-const defaultResolver = {
+type ResolverExpiresAt = Misskey.Endpoints['admin/abuse-report-resolver/create']['req']['expiresAt'];
+type ResolverForm = {
+	name: string;
+	targetUserPattern: string;
+	reporterPattern: string;
+	reportContentPattern: string;
+	expirationDate: string;
+	expiresAt: ResolverExpiresAt;
+	forward: boolean;
+	previousExpiresAt?: ResolverExpiresAt;
+};
+
+const defaultResolver: ResolverForm = {
 	name: '',
 	targetUserPattern: '',
 	reporterPattern: '',
@@ -117,44 +116,60 @@ const defaultResolver = {
 	forward: false,
 };
 
-const newResolver = ref<{
-	name: string;
-	targetUserPattern: string;
-	reporterPattern: string;
-	reportContentPattern: string;
-	expirationDate: string;
-	expiresAt: string;
-	forward: boolean;
-}>(defaultResolver);
+const newResolver = ref<ResolverForm>({ ...defaultResolver });
+const editingResolver = ref<ResolverForm>({ ...defaultResolver });
 
-const editingResolver = ref<{
-	name: string;
-	targetUserPattern: string;
-	reporterPattern: string;
-	reportContentPattern: string;
-	expiresAt: string;
-	expirationDate: string;
-	forward: boolean;
-	previousExpiresAt?: string;
-}>(defaultResolver);
+const {
+	model: state,
+	def: stateDef,
+} = useMkSelect({
+	items: [
+		{ label: i18n.ts.all, value: 'all' },
+		{ label: i18n.ts.unresolved, value: 'unresolved' },
+		{ label: i18n.ts.resolved, value: 'resolved' },
+	],
+	initialValue: 'unresolved',
+});
+const {
+	model: reporterOrigin,
+	def: reporterOriginDef,
+} = useMkSelect({
+	items: [
+		{ label: i18n.ts.all, value: 'combined' },
+		{ label: i18n.ts.local, value: 'local' },
+		{ label: i18n.ts.remote, value: 'remote' },
+	],
+	initialValue: 'combined',
+});
+const {
+	model: targetUserOrigin,
+	def: targetUserOriginDef,
+} = useMkSelect({
+	items: [
+		{ label: i18n.ts.all, value: 'combined' },
+		{ label: i18n.ts.local, value: 'local' },
+		{ label: i18n.ts.remote, value: 'remote' },
+	],
+	initialValue: 'combined',
+});
+const searchUsername = ref('');
+const searchHost = ref('');
 
-const pagination = {
-	endpoint: 'admin/abuse-user-reports' as const,
+const paginator = markRaw(new Paginator('admin/abuse-user-reports', {
 	limit: 10,
-	params: computed(() => ({
+	computedParams: computed(() => ({
 		state: state.value,
 		reporterOrigin: reporterOrigin.value,
 		targetUserOrigin: targetUserOrigin.value,
 	})),
-};
+}));
 
-const resolverPagination = {
-	endpoint: 'admin/abuse-report-resolver/list' as const,
+const resolverPaginator = markRaw(new Paginator('admin/abuse-report-resolver/list', {
 	limit: 10,
-};
+}));
 
 function resolved(reportId) {
-	reports.value!.removeItem(item => item.id === reportId);
+	paginator.removeItem(reportId);
 }
 
 function edit(id: string) {
@@ -162,8 +177,11 @@ function edit(id: string) {
 }
 
 function save(): void {
+	const resolverId = editableResolver.value;
+	if (resolverId == null) return;
+
 	os.apiWithDialog('admin/abuse-report-resolver/update', {
-		resolverId: editableResolver.value,
+		resolverId,
 		name: editingResolver.value.name,
 		targetUserPattern: editingResolver.value.targetUserPattern || null,
 		reporterPattern: editingResolver.value.reporterPattern || null,
@@ -181,7 +199,7 @@ function deleteResolver(id: string): void {
 	os.apiWithDialog('admin/abuse-report-resolver/delete', {
 		resolverId: id,
 	}).then(() => {
-		resolverPagingComponent.value?.reload();
+		resolverPaginator.reload();
 	});
 }
 
@@ -195,7 +213,7 @@ function create(): void {
 		forward: newResolver.value.forward,
 	}).then(() => {
 		folderComponent.value?.toggle();
-		resolverPagingComponent.value?.reload();
+		resolverPaginator.reload();
 		newResolver.value.name = '';
 		newResolver.value.targetUserPattern = '';
 		newResolver.value.reporterPattern = '';
@@ -203,10 +221,6 @@ function create(): void {
 		newResolver.value.expiresAt = 'indefinitely';
 		newResolver.value.forward = false;
 	});
-}
-
-function closeTutorial() {
-	store.set('abusesTutorial', false);
 }
 
 const headerActions = computed(() => []);

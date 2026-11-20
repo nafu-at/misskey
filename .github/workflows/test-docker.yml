@@ -8,16 +8,18 @@ on:
       - beta
       - io
       - host
+      - nijimiss
   pull_request:
 
 permissions:
   contents: read
   packages: read
+  security-events: write
 
 jobs:
   docker:
     runs-on: ubuntu-latest
-    if: github.repository == 'MisskeyIO/misskey'
+    if: github.repository == 'MisskeyIO/misskey' || github.repository == 'TeamNijimiss/misskey' || github.event_name == 'pull_request'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -30,18 +32,21 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$(git rev-parse --short HEAD)" > .git-commit
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Prepare image metadata
         shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.base_ref || github.ref_name }}
         run: |
           set -euo pipefail
 
-          ref_type="${{ github.ref_type }}"
-          ref_name="$(echo ${{ github.base_ref || github.ref_name }} | sed -e 's/\//-/g')"
+          ref_type="${REF_TYPE}"
+          ref_name="${REF_NAME//\//-}"
 
           branch_name="main"
           case "${ref_type}" in
@@ -57,7 +62,7 @@ jobs:
 
           echo "BRANCH_NAME=${branch_name}" >> "${GITHUB_ENV}"
       - name: Build an image from Dockerfile
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         id: build-scan
         with:
           context: .

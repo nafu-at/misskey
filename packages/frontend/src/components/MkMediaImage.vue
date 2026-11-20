@@ -4,22 +4,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 -->
 
 <template>
-<div v-if="!blocked" :class="[hide ? $style.hidden : $style.visible, (image.isSensitive && prefer.s.highlightSensitiveMedia) && $style.sensitive]" @click="showHiddenContent">
+<div v-if="!blocked" :class="[hide ? $style.hidden : $style.visible, (image.isSensitive && prefer.s.highlightSensitiveMedia) && $style.sensitive]" @click="onClick" @contextmenu.stop="onContextmenu">
 	<component
-		:is="(image.isSensitive && !$i) || disableImageLink ? 'div' : 'a'"
-		v-bind="(image.isSensitive && !$i) || disableImageLink ? {
+		:is="disableImageLink ? 'div' : 'a'"
+		v-bind="disableImageLink ? {
 			title: image.name,
 			class: $style.imageContainer,
 		} : {
 			title: image.name,
 			class: $style.imageContainer,
-			href: image.url,
+			href: hide ? undefined : image.url,
 			style: 'cursor: zoom-in;'
 		}"
 	>
-		<ImgWithBlurhash
+		<MkImgWithBlurhash
+			v-if="prefer.s.enableHighQualityImagePlaceholders"
 			:hash="image.blurhash"
-			:src="(image.isSensitive && !$i) || (prefer.s.dataSaver.media && hide) ? null : url"
+			:src="hide ? null : url"
 			:forceBlurhash="hide"
 			:cover="hide || cover"
 			:alt="image.comment || image.name"
@@ -27,6 +28,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 			:width="image.properties.width"
 			:height="image.properties.height"
 			:style="hide ? 'filter: brightness(0.7);' : null"
+			:class="$style.image"
+			:marker="marker"
+		/>
+		<div
+			v-else-if="prefer.s.dataSaver.media || hide"
+			:title="image.comment || image.name"
+			:style="hide ? 'background: #888;' : null"
+			:class="$style.image"
+		></div>
+		<img
+			v-else
+			:src="url"
+			:style="cover ? { objectFit: 'cover' } : undefined"
+			:alt="image.comment || image.name"
+			:title="image.comment || image.name"
+			:class="$style.image"
+			:data-marker="marker"
 		/>
 	</component>
 	<template v-if="hide">
@@ -44,8 +62,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 			<div v-if="image.comment" :class="$style.indicator">ALT</div>
 			<div v-if="image.isSensitive" :class="$style.indicator" style="color: var(--MI_THEME-warn);" :title="i18n.ts.sensitive"><i class="ti ti-eye-exclamation"></i></div>
 		</div>
-		<button :class="$style.menu" class="_button" @click.prevent.stop="showMenu"><i class="ti ti-dots" style="vertical-align: middle;"></i></button>
-		<i class="ti ti-eye-off" :class="$style.hide" @click.prevent.stop="hide = true"></i>
+		<button :class="[$style.menu, $style.menuBottom]" class="_button" @click.stop="showMenu"><i class="ti ti-dots" style="vertical-align: middle;" aria-hidden="true"></i></button>
+		<button :class="[$style.menu, $style.menuTop]" class="_button" @click.stop="hide = true"><i class="ti ti-eye-off" style="vertical-align: middle;" aria-hidden="true"></i></button>
 	</template>
 </div>
 </template>
@@ -53,18 +71,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 <script lang="ts" setup>
 import { watch, ref, computed } from 'vue';
 import * as Misskey from 'misskey-js';
-import type { MenuItem } from '@/types/menu.js';
-import { copyToClipboard } from '@/utility/copy-to-clipboard';
 import { getStaticImageUrl } from '@/utility/media-proxy.js';
 import bytes from '@/filters/bytes.js';
-import ImgWithBlurhash from '@/components/MkImgWithBlurhash.vue';
+import MkImgWithBlurhash from '@/components/MkImgWithBlurhash.vue';
 import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
-import { pleaseLogin } from '@/utility/please-login.js';
-import { sensitiveContentConsent, requestSensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
-import { $i, iAmModerator } from '@/i.js';
 import { prefer } from '@/preferences.js';
-import { misskeyApi } from '@/utility/misskey-api.js';
+import { shouldHideFileByDefault, canRevealFile, isFileBlocked } from '@/utility/sensitive-file.js';
+import { sensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
+import { getFileMenu } from '@/utility/get-file-menu.js';
 
 const props = withDefaults(defineProps<{
 	image: Misskey.entities.DriveFile;
@@ -72,172 +87,67 @@ const props = withDefaults(defineProps<{
 	cover?: boolean;
 	disableImageLink?: boolean;
 	controls?: boolean;
+	marker?: string;
 }>(), {
 	cover: false,
 	disableImageLink: false,
 	controls: true,
 });
 
-function calcHide(): boolean {
-	if (prefer.s.nsfw === 'force' || prefer.s.dataSaver.media) return true;
-	if (props.image.isSensitive && sensitiveContentConsent.value !== true) return true;
-	return props.image.isSensitive && prefer.s.nsfw !== 'ignore';
-}
+const emit = defineEmits<{
+	(event: 'mediaClick', ev: PointerEvent): void;
+}>();
 
-const hide = ref(calcHide());
-
-const blocked = computed(() => props.image.isSensitive && sensitiveContentConsent.value === false);
+const hide = ref(true);
+const blocked = computed(() => isFileBlocked(props.image));
 
 const url = computed(() => (props.raw || prefer.s.loadRawImages)
 	? props.image.url
 	: prefer.s.disableShowingAnimatedImages
 		? getStaticImageUrl(props.image.url)
-		: props.image.thumbnailUrl,
+		: props.image.thumbnailUrl!,
 );
 
-function showMenu(ev: MouseEvent) {
-	const menuItems: MenuItem[] = [];
+async function onClick(ev: PointerEvent) {
+	if (hide.value) ev.preventDefault();
+	if (blocked.value) return;
 
-	menuItems.push({
-		text: i18n.ts.hide,
-		icon: 'ti ti-eye-off',
-		action: () => {
-			hide.value = true;
-		},
-	});
-
-	if ($i && $i.id !== props.image.userId) {
-		menuItems.push({
-			text: i18n.ts.saveThisFile,
-			icon: 'ti ti-cloud-upload',
-			action: () => {
-				os.selectDriveFolder(false).then(async folder => {
-					misskeyApi('drive/files/upload-from-url', {
-						url: props.image.url,
-						folderId: folder[0]?.id,
-					});
-				});
-			},
-		});
+	if (!props.controls) {
+		emit('mediaClick', ev);
+		return;
 	}
 
-	if ($i?.id === props.image.userId || iAmModerator) {
-		menuItems.push({
-			type: 'divider',
-		});
-	}
-
-	if (iAmModerator) {
-		menuItems.push({
-			text: props.image.isSensitive ? i18n.ts.unmarkAsSensitive : i18n.ts.markAsSensitive,
-			icon: props.image.isSensitive ? 'ti ti-eye' : 'ti ti-eye-exclamation',
-			danger: true,
-			action: () => toggleSensitive(props.image),
-		});
-
-		menuItems.push({
-			text: props.image.isAiGenerated ? i18n.ts.unmarkAsAiGenerated : i18n.ts.markAsAiGenerated,
-			icon: props.image.isAiGenerated ? 'ti ti-robot' : 'ti ti-robot',
-			danger: true,
-			action: () => toggleAiGenerated(props.image),
-		});
-
-		if ($i?.id !== props.image.userId) {
-			menuItems.push({
-				type: 'link' as const,
-				text: i18n.ts._fileViewer.title,
-				icon: 'ti ti-info-circle',
-				to: `/admin/file/${props.image.id}`,
-			});
+	if (hide.value) {
+		ev.stopPropagation();
+		if (!(await canRevealFile(props.image))) {
+			return;
 		}
+
+		hide.value = false;
+	} else {
+		emit('mediaClick', ev);
 	}
-
-	const details: MenuItem[] = [];
-	if ($i?.id === props.image.userId) {
-		details.push({
-			type: 'link' as const,
-			text: i18n.ts._fileViewer.title,
-			icon: 'ti ti-info-circle',
-			to: `/my/drive/file/${props.image.id}`,
-		});
-	}
-
-	if (iAmModerator) {
-		details.push({
-			type: 'link',
-			text: i18n.ts.moderation,
-			icon: 'ti ti-photo-exclamation',
-			to: `/admin/file/${props.image.id}`,
-		});
-	}
-
-	if (details.length > 0) {
-		menuItems.push({ type: 'divider' }, ...details);
-	}
-
-	if (prefer.s.devMode) {
-		menuItems.push({ type: 'divider' }, {
-			icon: 'ti ti-hash',
-			text: i18n.ts.copyFileId,
-			action: () => {
-				copyToClipboard(props.image.id);
-			},
-		});
-	}
-
-	os.popupMenu(menuItems, ev.currentTarget ?? ev.target);
-}
-
-async function showHiddenContent(ev: MouseEvent) {
-	if (!props.controls || !hide.value) {
-		return;
-	}
-
-	ev.preventDefault();
-	ev.stopPropagation();
-
-	if (props.image.isSensitive && !$i) {
-		await pleaseLogin();
-		return;
-	}
-
-	if (props.image.isSensitive && sensitiveContentConsent.value !== true) {
-		const allowed = await requestSensitiveContentConsent();
-		if (!allowed) return;
-	}
-
-	if (props.image.isSensitive && prefer.s.confirmWhenRevealingSensitiveMedia) {
-		const { canceled } = await os.confirm({
-			type: 'question',
-			text: i18n.ts.sensitiveMediaRevealConfirm,
-		});
-		if (canceled) return;
-	}
-
-	hide.value = false;
-}
-
-function toggleSensitive(file: Misskey.entities.DriveFile) {
-	os.apiWithDialog('drive/files/update', {
-		fileId: file.id,
-		isSensitive: !file.isSensitive,
-	});
-}
-
-function toggleAiGenerated(file: Misskey.entities.DriveFile) {
-	os.apiWithDialog('drive/files/update', {
-		fileId: file.id,
-		isAiGenerated: !file.isAiGenerated,
-	});
 }
 
 // Plugin:register_note_view_interruptor を使って書き換えられる可能性があるためwatchする
-watch(() => props.image, () => {
-	hide.value = calcHide();
+watch(() => props.image, (newImage) => {
+	hide.value = shouldHideFileByDefault(newImage);
 }, {
 	deep: true,
 	immediate: true,
 });
+
+watch(sensitiveContentConsent, () => {
+	if (props.image.isSensitive && sensitiveContentConsent.value !== true) hide.value = true;
+});
+
+function showMenu(ev: PointerEvent) {
+	os.popupMenu(getFileMenu(props.image, (newHide) => { hide.value = newHide; }), (ev.currentTarget ?? ev.target ?? undefined) as HTMLElement | undefined);
+}
+
+function onContextmenu(ev: PointerEvent) {
+	os.contextMenu(getFileMenu(props.image, (newHide) => { hide.value = newHide; }), ev);
+}
 </script>
 
 <style lang="scss" module>
@@ -274,21 +184,6 @@ watch(() => props.image, () => {
 	cursor: pointer;
 }
 
-.hide {
-	display: block;
-	position: absolute;
-	border-radius: 6px;
-	background-color: var(--MI_THEME-fg);
-	color: hsl(from var(--MI_THEME-accent) h s calc(l + 10));
-	font-size: 12px;
-	opacity: .5;
-	padding: 5px 8px;
-	text-align: center;
-	cursor: pointer;
-	top: 12px;
-	right: 12px;
-}
-
 .hiddenTextWrapper {
 	display: table-cell;
 	text-align: center;
@@ -316,7 +211,6 @@ html[data-color-scheme=light] .visible {
 .menu {
 	display: block;
 	position: absolute;
-	border-radius: 999px;
 	background-color: rgba(0, 0, 0, 0.3);
 	-webkit-backdrop-filter: var(--MI-blur, blur(15px));
 	backdrop-filter: var(--MI-blur, blur(15px));
@@ -325,8 +219,18 @@ html[data-color-scheme=light] .visible {
 	width: 28px;
 	height: 28px;
 	text-align: center;
-	bottom: 10px;
-	right: 10px;
+}
+
+.menuBottom {
+	border-radius: 8px 0 8px 0;
+	bottom: 0;
+	right: 0;
+}
+
+.menuTop {
+	border-radius: 0 8px 0 8px;
+	top: 0;
+	right: 0;
 }
 
 .imageContainer {
@@ -358,5 +262,13 @@ html[data-color-scheme=light] .visible {
 	font-weight: bold;
 	font-size: 0.8em;
 	padding: 2px 5px;
+}
+
+.image {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	object-position: center;
 }
 </style>

@@ -83,6 +83,12 @@ export const meta = {
 			id: 'b9d8c348-33f0-4673-b9a9-5d4da058977a',
 			httpStatusCode: 413,
 		},
+
+		unallowedFileType: {
+			message: 'Cannot upload the file because it is an unallowed file type.',
+			code: 'UNALLOWED_FILE_TYPE',
+			id: '4becd248-7f2c-48c4-a9f0-75edc4f9a1ea',
+		},
 	},
 } as const;
 
@@ -120,16 +126,20 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			const logger = this.loggerService.getLogger('api:drive:files:create');
 
 			if (!file) {
-				logger.setContext({ userId: me.id, ip, headers });
-				logger.error('File is required but did not provided.');
+				logger.error({
+					message: 'File is required but did not provided.',
+					attributes: { userId: me.id, ip, headers },
+				});
 				throw new ApiError(meta.errors.invalidParam);
 			}
 
 			const calcHash = createHash('sha256').update(`${ps.folderId}:${ps.name}:${ps.isSensitive}`);
 			await stream.pipeline(fs.createReadStream(file.path, { encoding: 'binary', start: 0, end: 1024 * 1024 }), calcHash);
 			const hash = calcHash.digest('base64');
-			logger.setContext({ userId: me.id, hash, ip, headers });
-			logger.info('Request to create drive file.');
+			logger.info({
+				message: 'Request to create drive file.',
+				attributes: { userId: me.id, hash, ip, headers },
+			});
 
 			const idempotent = process.env.FORCE_IGNORE_IDEMPOTENCY_FOR_TESTING !== 'true' ? await this.redisClient.get(`drive:files:create:idempotent:${me.id}:${hash}`) : null;
 			if (idempotent === '_') { // 他のサーバーで処理中
@@ -193,6 +203,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 					if (e.id === '282f77bf-5816-4f72-9264-aa14d8261a21') throw new ApiError(meta.errors.inappropriate);
 					if (e.id === 'c6244ed2-a39a-4e1c-bf93-f0fbd7764fa6') throw new ApiError(meta.errors.noFreeSpace);
 					if (e.id === 'f9e4e5f3-4df4-40b5-b400-f236945f7073') throw new ApiError(meta.errors.maxFileSizeExceeded);
+					if (e.id === 'bd71c601-f9b0-4808-9137-a330647ced9b') throw new ApiError(meta.errors.unallowedFileType);
 				}
 
 				const err = e as Error;
@@ -205,7 +216,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 					{
 						message: err.message,
 						code: err.name,
-				},
+					},
 				);
 			} finally {
 				if (cleanup) cleanup();

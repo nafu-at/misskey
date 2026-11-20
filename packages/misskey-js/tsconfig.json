@@ -2,15 +2,14 @@
 	"$schema": "https://json.schemastore.org/tsconfig",
 	"compilerOptions": {
 		"target": "ES2022",
-		"module": "ES2022",
-		"moduleResolution": "bundler",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
 		"declaration": true,
 		"declarationMap": true,
-		"sourceMap": true,
-		"sourceRoot": "/",
-		"inlineSources": true,
-		"outDir": "./built/",
+		"sourceMap": false,
+		"outDir": "./built",
 		"removeComments": true,
+		"skipLibCheck": true,
 		"strict": true,
 		"strictFunctionTypes": true,
 		"strictNullChecks": true,
@@ -18,6 +17,7 @@
 		"noImplicitReturns": true,
 		"esModuleInterop": true,
 		"exactOptionalPropertyTypes": true,
+		"rootDir": "./src",
 		"typeRoots": [
 			"./node_modules/@types"
 		],

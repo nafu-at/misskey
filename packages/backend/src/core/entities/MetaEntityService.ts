@@ -58,13 +58,13 @@ export class MetaEntityService {
 		if (instance.defaultLightTheme) {
 			try {
 				defaultLightTheme = JSON.stringify(JSON5.parse(instance.defaultLightTheme));
-			} catch (e) {
+			} catch (_) {
 			}
 		}
 		if (instance.defaultDarkTheme) {
 			try {
 				defaultDarkTheme = JSON.stringify(JSON5.parse(instance.defaultDarkTheme));
-			} catch (e) {
+			} catch (_) {
 			}
 		}
 
@@ -73,6 +73,7 @@ export class MetaEntityService {
 			maintainerEmail: instance.maintainerEmail,
 
 			version: this.config.version,
+			providesTarball: this.config.publishTarballInsteadOfProvideRepositoryUrl,
 
 			name: instance.name,
 			shortName: instance.shortName,
@@ -85,8 +86,10 @@ export class MetaEntityService {
 			feedbackUrl: instance.feedbackUrl,
 			impressumUrl: instance.impressumUrl,
 			privacyPolicyUrl: instance.privacyPolicyUrl,
-			postingGuidelinesUrl: instance.postingGuidelinesUrl,
 			inquiryUrl: instance.inquiryUrl,
+			postingGuidelinesUrl: instance.postingGuidelinesUrl,
+			commerceDisclosureUrl: instance.commerceDisclosureUrl,
+			statusPageUrl: instance.statusPageUrl,
 			disableRegistration: instance.disableRegistration || envOption.disableRegistration,
 			emailRequiredForSignup: instance.emailRequiredForSignup,
 			enableHcaptcha: instance.enableHcaptcha,
@@ -113,6 +116,7 @@ export class MetaEntityService {
 			maxNoteTextLength: MAX_NOTE_TEXT_LENGTH,
 			defaultLightTheme,
 			defaultDarkTheme,
+			clientOptions: instance.clientOptions,
 			ads: ads.map(ad => ({
 				id: ad.id,
 				url: ad.url,
@@ -121,7 +125,7 @@ export class MetaEntityService {
 				imageUrl: ad.imageUrl,
 				imageBlurhash: ad.imageBlurhash,
 				dayOfWeek: ad.dayOfWeek,
-				isSensitive: ad.isSensitive,
+				isSensitive: ad.isSensitive ? true : undefined,
 			})),
 			wellKnownWebsites: instance.wellKnownWebsites,
 			notesPerOneAd: instance.notesPerOneAd,
@@ -138,9 +142,7 @@ export class MetaEntityService {
 			mediaProxy: this.config.mediaProxy,
 			enableUrlPreview: instance.urlPreviewEnabled,
 			enableSkebStatus: !!this.config.skebStatus,
-			commerceDisclosureUrl: instance.commerceDisclosureUrl,
-			statusPageUrl: instance.statusPageUrl,
-			noteSearchableScope: (this.config.meilisearch == null || this.config.meilisearch.scope !== 'local') ? 'global' : 'local',
+			noteSearchableScope: (this.config.fulltextSearch?.provider === 'meilisearch' && this.config.meilisearch?.scope === 'local') ? 'local' : 'global',
 			maxFileSize: this.config.maxFileSize,
 			federation: this.meta.federation,
 		};

@@ -46,6 +46,7 @@ import { claimAchievement } from '@/utility/achievements.js';
 import { pleaseLogin } from '@/utility/please-login.js';
 import { $i } from '@/i.js';
 import { prefer } from '@/preferences.js';
+import { haptic } from '@/utility/haptic.js';
 
 const props = withDefaults(defineProps<{
 	user: { id: string } & Partial<Misskey.entities.UserDetailed>,
@@ -81,9 +82,12 @@ function onFollowChange(user: Misskey.entities.UserDetailed) {
 }
 
 async function onClick() {
-	await pleaseLogin({ openOnRemote: { type: 'web', path: `/@${props.user.username}@${props.user.host ?? host}` } });
+	const isLoggedIn = await pleaseLogin({ openOnRemote: { type: 'web', path: `/@${props.user.username}@${props.user.host ?? host}` } });
+	if (!isLoggedIn) return;
 
 	wait.value = true;
+
+	haptic();
 
 	try {
 		if (userDetailed.value.isFollowing) {
@@ -100,6 +104,21 @@ async function onClick() {
 			await misskeyApi('following/delete', {
 				userId: props.user.id,
 			});
+		} else if (userDetailed.value.hasPendingFollowRequestFromYou) {
+			const { canceled } = await os.confirm({
+				type: 'question',
+				text: i18n.tsx.cancelFollowRequestConfirm({ name: (userDetailed.value.name || userDetailed.value.username) ?? i18n.ts.user }),
+			});
+
+			if (canceled) {
+				wait.value = false;
+				return;
+			}
+
+			await misskeyApi('following/requests/cancel', {
+				userId: props.user.id,
+			});
+			userDetailed.value.hasPendingFollowRequestFromYou = false;
 		} else {
 			if (prefer.s.alwaysConfirmFollow) {
 				const { canceled } = await os.confirm({
@@ -113,41 +132,34 @@ async function onClick() {
 				}
 			}
 
-			if (userDetailed.value.hasPendingFollowRequestFromYou) {
-				await misskeyApi('following/requests/cancel', {
-					userId: props.user.id,
-				});
-				userDetailed.value.hasPendingFollowRequestFromYou = false;
-			} else {
-				await misskeyApi('following/create', {
-					userId: props.user.id,
-					withReplies: prefer.s.defaultFollowWithReplies,
-				});
-				emit('update:user', {
-					...userDetailed.value,
-					withReplies: prefer.s.defaultFollowWithReplies,
-				});
-				userDetailed.value.hasPendingFollowRequestFromYou = true;
+			await misskeyApi('following/create', {
+				userId: props.user.id,
+				withReplies: prefer.s.defaultFollowWithReplies,
+			});
+			emit('update:user', {
+				...userDetailed.value,
+				withReplies: prefer.s.defaultFollowWithReplies,
+			});
+			userDetailed.value.hasPendingFollowRequestFromYou = true;
 
-				if ($i == null) {
-					wait.value = false;
-					return;
-				}
+			if ($i == null) {
+				wait.value = false;
+				return;
+			}
 
-					claimAchievement('following1');
+			claimAchievement('following1');
 
-					if ($i.followingCount >= 10) {
-						claimAchievement('following10');
-					}
-					if ($i.followingCount >= 50) {
-						claimAchievement('following50');
-					}
-					if ($i.followingCount >= 100) {
-						claimAchievement('following100');
-					}
-					if ($i.followingCount >= 300) {
-						claimAchievement('following300');
-					}
+			if ($i.followingCount >= 10) {
+				claimAchievement('following10');
+			}
+			if ($i.followingCount >= 50) {
+				claimAchievement('following50');
+			}
+			if ($i.followingCount >= 100) {
+				claimAchievement('following100');
+			}
+			if ($i.followingCount >= 300) {
+				claimAchievement('following300');
 			}
 		}
 	} catch (err) {

@@ -54,7 +54,7 @@ export class MiPage {
 	@Column('varchar', {
 		length: 32,
 	})
-	public font: string;
+	public font: 'serif' | 'sans-serif';
 
 	@Index()
 	@Column({
@@ -63,7 +63,7 @@ export class MiPage {
 	})
 	public userId: MiUser['id'];
 
-	@ManyToOne(type => MiUser, {
+	@ManyToOne(() => MiUser, {
 		onDelete: 'CASCADE',
 	})
 	@JoinColumn()
@@ -75,8 +75,8 @@ export class MiPage {
 	})
 	public eyeCatchingImageId: MiDriveFile['id'] | null;
 
-	@ManyToOne(type => MiDriveFile, {
-		onDelete: 'CASCADE',
+	@ManyToOne(() => MiDriveFile, {
+		onDelete: 'SET NULL',
 	})
 	@JoinColumn()
 	public eyeCatchingImage: MiDriveFile | null;
@@ -106,6 +106,15 @@ export class MiPage {
 		default: 'public',
 	})
 	public visibility: 'public' | 'private';
+
+	// 旧DBとの互換列。公開範囲の判定には使わない。
+	@Index()
+	@Column({
+		...id(),
+		array: true,
+		default: '{}',
+	})
+	public visibleUserIds: MiUser['id'][];
 
 	@Column('integer', {
 		default: 0,

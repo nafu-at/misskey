@@ -28,9 +28,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 		</div>
 	</MkA>
 </div>
-<div v-if="!initializing && history.length == 0" class="_fullinfo">
-	<div>{{ i18n.ts._chat.noHistory }}</div>
-</div>
+<MkResult v-if="!initializing && history.length == 0" type="empty" :text="i18n.ts._chat.noHistory"/>
 <MkLoading v-if="initializing"/>
 </template>
 
@@ -89,7 +87,7 @@ onDeactivated(() => {
 
 useInterval(() => {
 	// TODO: DOM的にバックグラウンドになっていないかどうかも考慮する
-	if (!window.document.hidden && isActivated) {
+	if (isActivated) {
 		fetchHistory();
 	}
 }, 1000 * 10, {

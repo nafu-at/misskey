@@ -8,6 +8,7 @@ import { prefer } from '@/preferences.js';
 import { PREF_DEF } from '@/preferences/def.js';
 import { $i } from '@/i.js';
 import { RateLimiter } from '@/utility/rate-limiter.js';
+import { getInitialPrefValue } from '@/preferences/manager.js';
 
 let ctx: AudioContext;
 const cache = new Map<string, AudioBuffer>();
@@ -27,7 +28,7 @@ export const soundsTypes = [
 	null,
 
 	// ドライブの音声
-	...($i?.policies.canUseDriveFileInSoundSettings ? ['_driveFile_'] : []),
+	...($i?.policies.canUseDriveFileInSoundSettings ? ['_driveFile_' as const] : []),
 
 	// プリインストール
 	'syuilo/n-aec',
@@ -121,7 +122,7 @@ export async function loadAudio(url: string, options?: { useCache?: boolean; }) 
 
 	try {
 		response = await window.fetch(url);
-	} catch (err) {
+	} catch (_) {
 		return;
 	}
 
@@ -144,7 +145,8 @@ export function playMisskeySfx(operationType: OperationType) {
 	playMisskeySfxFile(sound).then((succeed) => {
 		if (!succeed && sound.type === '_driveFile_') {
 			// ドライブファイルが存在しない場合はデフォルトのサウンドを再生する
-			const soundName = PREF_DEF[`sound_${operationType}`].default.type as Exclude<SoundType, '_driveFile_'>;
+			const default_ = getInitialPrefValue(`sound.on.${operationType}`);
+			const soundName = default_.type as Exclude<SoundType, '_driveFile_'>;
 			if (_DEV_) console.log(`Failed to play sound: ${sound.fileUrl}, so play default sound: ${soundName}`);
 			playMisskeySfxFileInternal({
 				type: soundName,
@@ -254,6 +256,11 @@ export async function getSoundDuration(file: string): Promise<number> {
 				audioEl.remove();
 			}
 		}, 100);
+		audioEl.addEventListener('error', () => {
+			resolve(0);
+			window.clearInterval(si);
+			audioEl.remove();
+		}, { once: true });
 	});
 }
 

@@ -87,6 +87,16 @@ export class NotificationService implements OnApplicationShutdown {
 		);
 	}
 
+	@bindThis
+	public createNotificationAsync<T extends MiNotification['type']>(
+		notifieeId: MiUser['id'],
+		type: T,
+		data: Omit<FilterUnionByProperty<MiNotification, 'type', T>, 'type' | 'id' | 'createdAt' | 'notifierId'>,
+		notifierId?: MiUser['id'] | null,
+	): Promise<MiNotification | null> {
+		return this.#createNotificationInternal(notifieeId, type, data, notifierId);
+	}
+
 	async #createNotificationInternal<T extends MiNotification['type']>(
 		notifieeId: MiUser['id'],
 		type: T,
@@ -202,7 +212,7 @@ export class NotificationService implements OnApplicationShutdown {
 	}
 
 	// TODO
-	//const locales = await import('../../../../locales/index.js');
+	//const locales = await import('i18n');
 
 	// TODO: locale ファイルをクライアント用とサーバー用で分けたい
 
@@ -246,9 +256,8 @@ export class NotificationService implements OnApplicationShutdown {
 
 	private toXListId(id: string): string {
 		const { date, additional } = this.idService.parseFull(id);
-		// additional の下位 24 ビットのみを使用
-		const sequence = additional & ((1n << 24n) - 1n);
-		return `${date}-${sequence}`;
+		// Redis Stream sequenceはunit64制約があるため、収まらない場合は下位64bitを取る
+		return date.toString() + '-' + BigInt.asUintN(64, additional).toString();
 	}
 
 	@bindThis
@@ -273,7 +282,7 @@ export class NotificationService implements OnApplicationShutdown {
 		let untilTime = untilId ? this.toXListId(untilId) : null;
 
 		let notifications: MiNotification[];
-		for (;;) {
+		for (; ;) {
 			let notificationsRes: [id: string, fields: string[]][];
 
 			// sinceidのみの場合は古い順、そうでない場合は新しい順。 QueryService.makePaginationQueryも参照

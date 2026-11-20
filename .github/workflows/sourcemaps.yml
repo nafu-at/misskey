@@ -22,10 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'MisskeyIO/misskey'
 
-    strategy:
-      matrix:
-        node-version: [22.x]
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -34,14 +30,14 @@ jobs:
           submodules: true
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v4
         with:
           run_install: false
 
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version-file: '.node-version'
           cache: 'pnpm'
 
       - name: Install dependencies

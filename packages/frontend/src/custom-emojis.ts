@@ -43,29 +43,30 @@ export function removeCustomEmojis(emojis: Misskey.entities.EmojiSimple[]) {
 	set('emojis', customEmojis.value);
 }
 
-export async function fetchCustomEmojis(force = false) {
+export async function fetchCustomEmojis(force = false, signal?: AbortSignal) {
 	const now = Date.now();
 
 	let res;
 	if (force) {
-		res = await misskeyApi('emojis', {});
+		res = await misskeyApi('emojis', {}, undefined, signal);
 	} else {
 		const emojiCacheExist = await exist('emojis');
 		const lastFetchedAt = await get('lastEmojisFetchedAt');
 		if (lastFetchedAt && (now - lastFetchedAt) < 1000 * 60 * 60 && emojiCacheExist) return;
-		res = await misskeyApiGet('emojis', {});
+		res = await misskeyApiGet('emojis', {}, 'misskey', signal);
 	}
 
 	customEmojis.value = res.emojis;
-	set('emojis', res.emojis);
-	set('lastEmojisFetchedAt', now);
+	// 保存前に再読込すると、起動時に一覧を再取得してしまう。
+	await set('emojis', res.emojis);
+	await set('lastEmojisFetchedAt', now);
 }
 
-let cachedTags;
+let cachedTags: string[] | null = null;
 export function getCustomEmojiTags() {
 	if (cachedTags) return cachedTags;
 
-	const tags = new Set();
+	const tags = new Set<string>();
 	for (const emoji of customEmojis.value) {
 		for (const tag of emoji.aliases) {
 			tags.add(tag);

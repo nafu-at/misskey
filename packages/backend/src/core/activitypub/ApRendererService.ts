@@ -19,7 +19,7 @@ import type { MiEmoji } from '@/models/Emoji.js';
 import type { MiPoll } from '@/models/Poll.js';
 import type { MiPollVote } from '@/models/PollVote.js';
 import { UserKeypairService } from '@/core/UserKeypairService.js';
-import { MfmService, type Appender } from '@/core/MfmService.js';
+import { MfmService } from '@/core/MfmService.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import { DriveFileEntityService } from '@/core/entities/DriveFileEntityService.js';
 import type { MiUserKeypair } from '@/models/UserKeypair.js';
@@ -28,6 +28,7 @@ import { bindThis } from '@/decorators.js';
 import { CustomEmojiService } from '@/core/CustomEmojiService.js';
 import { IdService } from '@/core/IdService.js';
 import { UtilityService } from '@/core/UtilityService.js';
+import { escapeHtml } from '@/misc/escape-html.js';
 import { JsonLdService } from './JsonLdService.js';
 import { ApMfmService } from './ApMfmService.js';
 import { CONTEXT } from './misc/contexts.js';
@@ -92,8 +93,8 @@ export class ApRendererService {
 	public renderAnnounce(object: string | IObject, note: MiNote): IAnnounce {
 		const attributedTo = this.userEntityService.genLocalUserUri(note.userId);
 
-		let to: string[];
-		let cc: string[];
+		let to: string[] = [];
+		let cc: string[] = [];
 
 		if (note.visibility === 'public') {
 			to = ['https://www.w3.org/ns/activitystreams#Public'];
@@ -171,6 +172,8 @@ export class ApRendererService {
 			mediaType: file.webpublicType ?? file.type,
 			url: this.driveFileEntityService.getPublicUrl(file, { remapActivityPub: true }),
 			name: file.comment,
+			width: file.properties?.width,
+			height: file.properties?.height,
 			sensitive: file.isSensitive,
 		};
 	}
@@ -365,7 +368,7 @@ export class ApRendererService {
 			return ids.map(id => items.find(item => item.id === id)).filter(x => x != null);
 		};
 
-		let inReplyTo: string | IPost | null = null;
+		let inReplyTo;
 		let inReplyToNote: MiNote | null;
 
 		if (note.replyId) {
@@ -386,9 +389,11 @@ export class ApRendererService {
 					}
 				}
 			}
+		} else {
+			inReplyTo = null;
 		}
 
-		let quote: string | null = null;
+		let quote: string | undefined;
 
 		if (note.renoteId) {
 			const renote = await this.notesRepository.findOneBy({ id: note.renoteId });
@@ -402,8 +407,8 @@ export class ApRendererService {
 
 		const mentions = (JSON.parse(note.mentionedRemoteUsers) as IMentionedRemoteUsers).map(x => x.uri);
 
-		let to: string[];
-		let cc: string[];
+		let to: string[] = [];
+		let cc: string[] = [];
 
 		if (note.visibility === 'public') {
 			to = ['https://www.w3.org/ns/activitystreams#Public'];
@@ -416,7 +421,6 @@ export class ApRendererService {
 			cc = mentions;
 		} else {
 			to = mentions;
-			cc = [];
 		}
 
 		const mentionedUsers = note.mentions.length > 0 ? await this.usersRepository.findBy({
@@ -435,29 +439,18 @@ export class ApRendererService {
 			poll = await this.pollsRepository.findOneBy({ noteId: note.id });
 		}
 
-		const apAppend: Appender[] = [];
+		let extraHtml: string | null = null;
 
-		if (quote) {
+		if (quote != null) {
 			// Append quote link as `<br><br><span class="quote-inline">RE: <a href="...">...</a></span>`
-			// the claas name `quote-inline` is used in non-misskey clients for styling quote notes.
+			// the class name `quote-inline` is used in non-misskey clients for styling quote notes.
 			// For compatibility, the span part should be kept as possible.
-			apAppend.push((doc, body) => {
-				body.appendChild(doc.createElement('br'));
-				body.appendChild(doc.createElement('br'));
-				const span = doc.createElement('span');
-				span.className = 'quote-inline';
-				span.appendChild(doc.createTextNode('RE: '));
-				const link = doc.createElement('a');
-				link.setAttribute('href', quote);
-				link.textContent = quote;
-				span.appendChild(link);
-				body.appendChild(span);
-			});
+			extraHtml = `<br><br><span class="quote-inline">RE: <a href="${escapeHtml(quote)}">${escapeHtml(quote)}</a></span>`;
 		}
 
 		const summary = note.cw === '' ? String.fromCharCode(0x200B) : note.cw;
 
-		const { content, noMisskeyContent } = this.apMfmService.getNoteHtml(note, apAppend);
+		const { content, noMisskeyContent } = this.apMfmService.getNoteHtml(note, extraHtml);
 
 		const emojis = await this.getEmojis(note.emojis);
 		const apemojis = emojis.filter(emoji => !emoji.localOnly).map(emoji => this.renderEmoji(emoji));
@@ -494,12 +487,12 @@ export class ApRendererService {
 					mediaType: 'text/x.misskeymarkdown',
 				},
 			}),
-			_misskey_quote: quote ?? undefined,
-			quoteUrl: quote ?? undefined,
+			_misskey_quote: quote,
+			quoteUrl: quote,
 			published: this.idService.parse(note.id).date.toISOString(),
 			to,
 			cc,
-			inReplyTo: inReplyTo ?? undefined,
+			inReplyTo,
 			attachment: files.map(x => this.renderDocument(x)),
 			sensitive: note.cw != null || files.some(file => file.isSensitive),
 			tag,
@@ -530,7 +523,7 @@ export class ApRendererService {
 				const restPart = maybeUrl.slice(match[0].length);
 
 				return `<a href="${urlPartParsed.href}" rel="me nofollow noopener" target="_blank">${urlPart}</a>${restPart}`;
-			} catch (e) {
+			} catch (_) {
 				return maybeUrl;
 			}
 		};

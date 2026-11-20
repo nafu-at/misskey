@@ -7,6 +7,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import type { IActivity } from '@/core/activitypub/type.js';
 import type { MiDriveFile } from '@/models/DriveFile.js';
+import type { MiNoteDraft } from '@/models/NoteDraft.js';
 import type { MiScheduledNote } from '@/models/ScheduledNote.js';
 import type { MiAbuseUserReport } from '@/models/AbuseUserReport.js';
 import type { MiWebhook, WebhookEventTypes } from '@/models/Webhook.js';
@@ -17,7 +18,6 @@ import { bindThis } from '@/decorators.js';
 import type { Antenna } from '@/server/api/endpoints/i/import-antennas.js';
 import { ApRequestCreator } from '@/core/activitypub/ApRequestService.js';
 import { type SystemWebhookPayload } from '@/core/SystemWebhookService.js';
-import { Queues } from '@/misc/queues.js';
 import { type UserWebhookPayload } from './UserWebhookService.js';
 import type {
 	DbJobData,
@@ -31,6 +31,7 @@ import type {
 	DbQueue,
 	DeliverQueue,
 	EndedPollNotificationQueue,
+	PostScheduledNoteQueue,
 	InboxQueue,
 	ObjectStorageQueue,
 	RelationshipQueue,
@@ -44,6 +45,7 @@ import type * as Bull from 'bullmq';
 export const QUEUE_TYPES = [
 	'system',
 	'endedPollNotification',
+	'postScheduledNote',
 	'deliver',
 	'inbox',
 	'db',
@@ -53,6 +55,64 @@ export const QUEUE_TYPES = [
 	'systemWebhookDeliver',
 ] as const;
 
+export function getPostScheduledNoteJobId(draftId: MiNoteDraft['id'], scheduledAt: Date | number): string {
+	const scheduledAtMs = typeof scheduledAt === 'number' ? scheduledAt : scheduledAt.getTime();
+	return `scheduled-note-${draftId}-${scheduledAtMs}`;
+}
+
+export const POST_SCHEDULED_NOTE_ATTEMPTS = 8;
+
+export function getPostScheduledNoteJobOptions(draftId: MiNoteDraft['id'], scheduledAt: Date, now = Date.now()): Bull.JobsOptions {
+	return {
+		jobId: getPostScheduledNoteJobId(draftId, scheduledAt),
+		delay: Math.max(scheduledAt.getTime() - now, 0),
+		attempts: POST_SCHEDULED_NOTE_ATTEMPTS,
+		backoff: {
+			type: 'exponential',
+			delay: 30 * 1000,
+		},
+		removeOnComplete: true,
+		removeOnFail: {
+			age: 3600 * 24 * 7,
+			count: 100,
+		},
+	};
+}
+
+const REPEATABLE_SYSTEM_JOB_DEF = [{
+	name: 'tickCharts',
+	pattern: '55 * * * *',
+}, {
+	name: 'resyncCharts',
+	pattern: '0 0 * * *',
+}, {
+	name: 'cleanCharts',
+	pattern: '0 0 * * *',
+}, {
+	name: 'aggregateRetention',
+	pattern: '0 0 * * *',
+}, {
+	name: 'clean',
+	pattern: '0 0 * * *',
+}, {
+	name: 'checkExpiredMutings',
+	pattern: '*/5 * * * *',
+}, {
+	name: 'checkMissingScheduledNote',
+	pattern: '*/5 * * * *',
+}, {
+	name: 'bakeBufferedReactions',
+	pattern: '0 0 * * *',
+}, {
+	name: 'checkModeratorsActivity',
+	// 毎時30分に起動
+	pattern: '30 * * * *',
+}, {
+	name: 'cleanRemoteNotes',
+	// 毎日午前4時に起動(最も人の少ない時間帯)
+	pattern: '0 4 * * *',
+}];
+
 @Injectable()
 export class QueueService {
 	constructor(
@@ -61,6 +121,7 @@ export class QueueService {
 
 		@Inject('queue:system') public systemQueue: SystemQueue,
 		@Inject('queue:endedPollNotification') public endedPollNotificationQueue: EndedPollNotificationQueue,
+		@Inject('queue:postScheduledNote') public postScheduledNoteQueue: PostScheduledNoteQueue,
 		@Inject('queue:deliver') public deliverQueue: DeliverQueue,
 		@Inject('queue:inbox') public inboxQueue: InboxQueue,
 		@Inject('queue:db') public dbQueue: DbQueue,
@@ -69,64 +130,31 @@ export class QueueService {
 		@Inject('queue:userWebhookDeliver') public userWebhookDeliverQueue: UserWebhookDeliverQueue,
 		@Inject('queue:systemWebhookDeliver') public systemWebhookDeliverQueue: SystemWebhookDeliverQueue,
 	) {
-		this.ensureRepeatJobs();
-	}
+		for (const def of REPEATABLE_SYSTEM_JOB_DEF) {
+			this.systemQueue.upsertJobScheduler(def.name, {
+				pattern: def.pattern,
+				immediately: false,
+			}, {
+				name: def.name,
+				opts: {
+					// 期限ではなくcountで設定したいが、ジョブごとではなくキュー全体でカウントされるため、高頻度で実行されるジョブによって低頻度で実行されるジョブのログが消えることになる
+					removeOnComplete: {
+						age: 3600 * 24 * 7, // keep up to 7 days
+					},
+					removeOnFail: {
+						age: 3600 * 24 * 7, // keep up to 7 days
+					},
+				},
+			});
+		}
 
-	@bindThis
-	private ensureRepeatJobs() {
-		void this.systemQueue.add('tickCharts', {
-		}, {
-			repeat: { pattern: '55 * * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('resyncCharts', {
-		}, {
-			repeat: { pattern: '0 0 * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('cleanCharts', {
-		}, {
-			repeat: { pattern: '0 0 * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('aggregateRetention', {
-		}, {
-			repeat: { pattern: '0 0 * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('clean', {
-		}, {
-			repeat: { pattern: '0 0 * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('checkExpiredMutings', {
-		}, {
-			repeat: { pattern: '*/5 * * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('checkMissingScheduledNote', {
-		}, {
-			repeat: { pattern: '*/5 * * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('bakeBufferedReactions', {
-		}, {
-			repeat: { pattern: '0 0 * * *' },
-			removeOnComplete: true,
-		});
-
-		void this.systemQueue.add('checkModeratorsActivity', {
-		}, {
-			// 毎時30分に起動
-			repeat: { pattern: '30 * * * *' },
-			removeOnComplete: true,
+		// 古いバージョンで作成され現在使われなくなったrepeatableジョブをクリーンアップ
+		this.systemQueue.getJobSchedulers().then(schedulers => {
+			for (const scheduler of schedulers) {
+				if (!REPEATABLE_SYSTEM_JOB_DEF.some(def => def.name === scheduler.key)) {
+					this.systemQueue.removeJobScheduler(scheduler.key);
+				}
+			}
 		});
 	}
 
@@ -494,6 +522,20 @@ export class QueueService {
 	}
 
 	@bindThis
+	public createPostScheduledNoteJob(draftId: MiNoteDraft['id'], scheduledAt: Date) {
+		const scheduledAtMs = scheduledAt.getTime();
+		return this.postScheduledNoteQueue.add('postScheduledNote', {
+			noteDraftId: draftId,
+			scheduledAt: scheduledAtMs,
+		}, getPostScheduledNoteJobOptions(draftId, scheduledAt));
+	}
+
+	@bindThis
+	public removePostScheduledNoteJob(draftId: MiNoteDraft['id'], scheduledAt: Date) {
+		return this.postScheduledNoteQueue.remove(getPostScheduledNoteJobId(draftId, scheduledAt));
+	}
+
+	@bindThis
 	public createFollowJob(followings: { from: ThinUser, to: ThinUser, requestId?: string, silent?: boolean, withReplies?: boolean }[]) {
 		const jobs = followings.map(rel => this.generateRelationshipJobData('follow', rel));
 		return this.relationshipQueue.addBulk(jobs);
@@ -632,6 +674,7 @@ export class QueueService {
 		switch (type) {
 			case 'system': return this.systemQueue;
 			case 'endedPollNotification': return this.endedPollNotificationQueue;
+			case 'postScheduledNote': return this.postScheduledNoteQueue;
 			case 'deliver': return this.deliverQueue;
 			case 'inbox': return this.inboxQueue;
 			case 'db': return this.dbQueue;
@@ -657,5 +700,15 @@ export class QueueService {
 		} else {
 			queue.clean(0, 0, state);
 		}
+	}
+
+	@bindThis
+	public async queuePause(queueType: typeof QUEUE_TYPES[number]) {
+		await this.getQueue(queueType).pause();
+	}
+
+	@bindThis
+	public async queueResume(queueType: typeof QUEUE_TYPES[number]) {
+		await this.getQueue(queueType).resume();
 	}
 }

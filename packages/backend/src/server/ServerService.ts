@@ -8,7 +8,7 @@ import os from 'node:os';
 import * as fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Inject, Injectable, OnApplicationShutdown } from '@nestjs/common';
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyRawBody from 'fastify-raw-body';
 import { IsNull } from 'typeorm';
@@ -23,6 +23,7 @@ import { appendQuery, omitHttps, query } from '@/misc/prelude/url.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import { LoggerService } from '@/core/LoggerService.js';
 import { bindThis } from '@/decorators.js';
+import { envOption } from '@/env.js';
 import { ActivityPubServerService } from './ActivityPubServerService.js';
 import { NodeinfoServerService } from './NodeinfoServerService.js';
 import { ApiServerService } from './api/ApiServerService.js';
@@ -34,6 +35,7 @@ import { OpenApiServerService } from './api/openapi/OpenApiServerService.js';
 import { OAuth2ProviderService } from './oauth/OAuth2ProviderService.js';
 import { JWTIdentifyProviderService } from './sso/JWTIdentifyProviderService.js';
 import { SAMLIdentifyProviderService } from './sso/SAMLIdentifyProviderService.js';
+import { registerHttpAccessLog } from './http-access-log.js';
 
 const _dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -77,21 +79,31 @@ export class ServerService implements OnApplicationShutdown {
 	}
 
 	@bindThis
-	public async launch() {
+	public async launch(): Promise<void> {
 		const fastify = Fastify({
+			trustProxy: this.config.trustProxy,
 			logger: false,
-			trustProxy: true,
 			routerOptions: {
 				maxParamLength: 1024,
 			},
 		});
 		this.#fastify = fastify;
+		registerHttpAccessLog(fastify);
 
 		// HSTS
 		// 6months (15552000sec)
 		if (this.config.url.startsWith('https') && !this.config.disableHsts) {
 			fastify.addHook('onRequest', (request, reply, done) => {
 				reply.header('strict-transport-security', 'max-age=15552000; preload');
+				done();
+			});
+		}
+
+		// for test
+		if (envOption.enableCrossOriginIsolation) {
+			fastify.addHook('onRequest', (request, reply, done) => {
+				reply.header('Cross-Origin-Opener-Policy', 'same-origin');
+				reply.header('Cross-Origin-Embedder-Policy', 'credentialless');
 				done();
 			});
 		}
@@ -121,7 +133,7 @@ export class ServerService implements OnApplicationShutdown {
 		// this will break lookup that involve copying a URL from a third-party server, like trying to lookup http://charlie.example.com/@alice@alice.com
 		//
 		// this is not required by standard but protect us from peers that did not validate final URL.
-		if (this.config.disallowExternalApRedirect) {
+		if (!this.meta.allowExternalApRedirect) {
 			const maybeApLookupRegex = /application\/activity\+json|application\/ld\+json.+activitystreams/i;
 			fastify.addHook('onSend', (request, reply, _, done) => {
 				const location = reply.getHeader('location');
@@ -260,44 +272,20 @@ export class ServerService implements OnApplicationShutdown {
 			}
 		});
 
-		fastify.get<{ Params: { code: string } }>('/verify-email/:code', async (request, reply) => {
-			const profile = await this.userProfilesRepository.findOneBy({
-				emailVerifyCode: request.params.code,
-			});
-
-			if (profile != null) {
-				await this.userProfilesRepository.update({ userId: profile.userId }, {
-					emailVerified: true,
-					emailVerifyCode: null,
-				});
-
-				this.globalEventService.publishMainStream(profile.userId, 'meUpdated', await this.userEntityService.pack(profile.userId, { id: profile.userId }, {
-					schema: 'MeDetailed',
-					includeSecrets: true,
-				}));
-
-				reply.code(200).send('Verification succeeded! メールアドレスの認証に成功しました。');
-				return;
-			} else {
-				reply.code(404).send('Verification failed. Please try again. メールアドレスの認証に失敗しました。もう一度お試しください');
-				return;
-			}
-		});
-
 		fastify.register(this.clientServerService.createServer);
 
 		this.streamingApiServerService.attach(fastify.server);
 
-		fastify.server.on('error', err => {
-			switch ((err as any).code) {
+		const handleListenError = (err: unknown): void => {
+			switch ((err as NodeJS.ErrnoException).code) {
 				case 'EACCES':
-					this.logger.error(`You do not have permission to listen on port ${this.config.port}.`);
+					this.logger.error(`You do not have permission to listen on ${this.config.socket ?? `port ${this.config.port}`}.`);
 					break;
 				case 'EADDRINUSE':
-					this.logger.error(`Port ${this.config.port} is already in use by another process.`);
+					this.logger.error(`${this.config.socket ?? `Port ${this.config.port}`} is already in use by another process.`);
 					break;
 				default:
-					this.logger.error(err);
+					this.logger.error(err as Error);
 					break;
 			}
 
@@ -307,29 +295,46 @@ export class ServerService implements OnApplicationShutdown {
 				// disableClustering
 				process.exit(1);
 			}
-		});
+		};
 
-		if (this.config.socket) {
-			if (fs.existsSync(this.config.socket)) {
-				fs.unlinkSync(this.config.socket);
-			}
-			fastify.listen({ path: this.config.socket }, (err, address) => {
-				if (this.config.chmodSocket) {
-					fs.chmodSync(this.config.socket!, this.config.chmodSocket);
+		try {
+			if (this.config.socket) {
+				if (fs.existsSync(this.config.socket)) {
+					fs.unlinkSync(this.config.socket);
 				}
-			});
-		} else {
-			fastify.listen({ port: this.config.port, host: '::' });
+				await fastify.listen({ path: this.config.socket });
+				if (this.config.chmodSocket) {
+					fs.chmodSync(this.config.socket, this.config.chmodSocket);
+				}
+			} else {
+				await fastify.listen({ port: this.config.port, host: '::' });
+			}
+			await fastify.ready();
+		} catch (err) {
+			handleListenError(err);
+			return;
 		}
-
-		await fastify.ready();
-		return fastify;
 	}
 
 	@bindThis
 	public async dispose(): Promise<void> {
-		this.streamingApiServerService.detach();
-		await this.#fastify.close();
+		await this.streamingApiServerService.detach();
+		// fastify@5 close() waits for upgraded WebSocket connections to drain.
+		// streamingApiServerService.attach() adds raw ws.Server upgrades that
+		// fastify does not track in its connection registry, so close() can hang
+		// forever during OnApplicationShutdown. Cap at 5s so PM2/systemd/k8s
+		// shutdown timeouts aren't held hostage.
+		await Promise.race([
+			this.#fastify.close(),
+			new Promise<void>(resolve => setTimeout(resolve, 5_000)),
+		]).catch(err => this.logger.error('fastify.close() failed', err as Error));
+	}
+
+	/**
+	 * Get the Fastify instance for testing.
+	 */
+	public get fastify(): FastifyInstance {
+		return this.#fastify;
 	}
 
 	@bindThis

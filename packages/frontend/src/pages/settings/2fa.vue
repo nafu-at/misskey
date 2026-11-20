@@ -20,24 +20,21 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<MkFolder :defaultOpen="true">
 					<template #icon><i class="ti ti-shield-lock"></i></template>
 					<template #label><SearchLabel>{{ i18n.ts.totp }}</SearchLabel></template>
-					<template #caption><SearchKeyword>{{ i18n.ts.totpDescription }}</SearchKeyword></template>
+					<template #caption><SearchText>{{ i18n.ts.totpDescription }}</SearchText></template>
 					<template #suffix><i v-if="$i.twoFactorEnabled" class="ti ti-check" style="color: var(--MI_THEME-success)"></i></template>
 
-					<div class="_gaps_s">
-				<MkInfo>
-					<Mfm :text="i18n.tsx._2fa.detailedGuide({ link: `[${i18n.ts.here}](https://go.misskey.io/howto-2fa)`})"/>
-				</MkInfo>
-				<MkInfo v-if="$i.securityKeysList.length > 0">{{ i18n.ts._2fa.whyTOTPOnlyRenew }}</MkInfo>
+					<div v-if="$i.twoFactorEnabled" class="_gaps_s">
+						<div>{{ i18n.ts._2fa.alreadyRegistered }}</div>
+						<template v-if="$i.securityKeysList!.length > 0">
+							<MkButton @click="renewTOTP">{{ i18n.ts._2fa.renewTOTP }}</MkButton>
+							<MkInfo>{{ i18n.ts._2fa.whyTOTPOnlyRenew }}</MkInfo>
+						</template>
+						<MkButton v-else danger @click="unregisterTOTP">{{ i18n.ts.unregister }}</MkButton>
+					</div>
 
-				<div v-if="$i.twoFactorEnabled" class="_gaps_s">
-					<div v-text="i18n.ts._2fa.alreadyRegistered"/>
-					<MkButton v-if="$i.securityKeysList.length > 0" @click="renewTOTP">{{ i18n.ts._2fa.renewTOTP }}</MkButton>
-					<MkButton v-else danger @click="unregisterTOTP">{{ i18n.ts.unregister }}</MkButton>
-				</div>
-
-				<MkButton v-else-if="!$i.twoFactorEnabled" primary gradate @click="registerTOTP">
-					{{ i18n.ts._2fa.registerTOTP }}
-						</MkButton>
+					<div v-else-if="!$i.twoFactorEnabled" class="_gaps_s">
+						<MkButton primary gradate @click="registerTOTP">{{ i18n.ts._2fa.registerTOTP }}</MkButton>
+						<MkLink url="https://misskey-hub.net/docs/for-users/stepped-guides/how-to-enable-2fa/" target="_blank"><i class="ti ti-help-circle"></i> {{ i18n.ts.learnMore }}</MkLink>
 					</div>
 				</MkFolder>
 			</SearchMarker>
@@ -51,17 +48,17 @@ SPDX-License-Identifier: AGPL-3.0-only
 							{{ i18n.ts._2fa.securityKeyInfo }}
 						</MkInfo>
 
-						<MkInfo v-if="!webAuthnSupported()" warn>
+						<MkInfo v-if="!browserSupportsWebAuthn()" warn>
 							{{ i18n.ts._2fa.securityKeyNotSupported }}
 						</MkInfo>
 
-						<MkInfo v-else-if="webAuthnSupported() && !$i.twoFactorEnabled" warn>
+						<MkInfo v-else-if="browserSupportsWebAuthn() && !$i.twoFactorEnabled" warn>
 							{{ i18n.ts._2fa.registerTOTPBeforeKey }}
 						</MkInfo>
 
 						<template v-else>
 							<MkButton primary @click="addSecurityKey">{{ i18n.ts._2fa.registerSecurityKey }}</MkButton>
-							<MkFolder v-for="key in $i.securityKeysList" :key="key.id">
+							<MkFolder v-for="key in $i.securityKeysList!" :key="key.id">
 								<template #label>{{ key.name }}</template>
 								<template #suffix><I18n :src="i18n.ts.lastUsedAt"><template #t><MkTime :time="key.lastUsed"/></template></I18n></template>
 								<div class="_buttons">
@@ -75,9 +72,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 			</SearchMarker>
 
 			<SearchMarker :keywords="['password', 'less', 'key', 'passkey', 'login', 'signin']">
-				<MkSwitch :disabled="!$i.twoFactorEnabled || $i.securityKeysList.length === 0" :modelValue="usePasswordLessLogin" @update:modelValue="v => updatePasswordLessLogin(v)">
+				<MkSwitch :disabled="!$i.twoFactorEnabled || $i.securityKeysList!.length === 0" :modelValue="usePasswordLessLogin" @update:modelValue="v => updatePasswordLessLogin(v)">
 					<template #label><SearchLabel>{{ i18n.ts.passwordLessLogin }}</SearchLabel></template>
-					<template #caption><SearchKeyword>{{ i18n.ts.passwordLessLoginDescription }}</SearchKeyword></template>
+					<template #caption><SearchText>{{ i18n.ts.passwordLessLoginDescription }}</SearchText></template>
 				</MkSwitch>
 			</SearchMarker>
 		</div>
@@ -86,13 +83,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 </template>
 
 <script lang="ts" setup>
-import { defineAsyncComponent, computed } from 'vue';
-import { browserSupportsWebAuthn as webAuthnSupported, startRegistration } from '@simplewebauthn/browser';
+import { computed } from 'vue';
+import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
+import * as Misskey from 'misskey-js';
 import MkButton from '@/components/MkButton.vue';
 import MkInfo from '@/components/MkInfo.vue';
 import MkSwitch from '@/components/MkSwitch.vue';
 import FormSection from '@/components/form/section.vue';
 import MkFolder from '@/components/MkFolder.vue';
+import MkLink from '@/components/MkLink.vue';
 import * as os from '@/os.js';
 import { ensureSignin } from '@/i.js';
 import { i18n } from '@/i18n.js';
@@ -119,9 +118,11 @@ async function registerTOTP(): Promise<void> {
 		token: auth.result.token,
 	});
 
-	os.popup(defineAsyncComponent(() => import('./2fa.qrdialog.vue')), {
+	const { dispose } = await os.popupAsyncWithDialog(import('./2fa.qrdialog.vue').then(x => x.default), {
 		twoFactorData,
-	}, {}, 'closed');
+	}, {
+		closed: () => dispose(),
+	});
 }
 
 async function unregisterTOTP(): Promise<void> {
@@ -156,7 +157,7 @@ function renewTOTP(): void {
 	});
 }
 
-async function unregisterKey(key): Promise<void> {
+async function unregisterKey(key: NonNullable<Misskey.entities.MeDetailedOnly['securityKeysList']>[number]): Promise<void> {
 	const confirm = await os.confirm({
 		type: 'question',
 		title: i18n.ts._2fa.removeKey,
@@ -179,7 +180,7 @@ async function unregisterKey(key): Promise<void> {
 		}));
 }
 
-async function renameKey(key): Promise<void> {
+async function renameKey(key: NonNullable<Misskey.entities.MeDetailedOnly['securityKeysList']>[number]): Promise<void> {
 	const name = await os.inputText({
 		title: i18n.ts.rename,
 		default: key.name,
@@ -214,7 +215,10 @@ async function addSecurityKey() {
 	if (name.canceled) return;
 
 	const credential = await os.promiseDialog(
-		startRegistration({ optionsJSON: registrationOptions }),
+		startRegistration({
+			// @ts-expect-error API schemaではWebAuthnの型を完全に表現できない
+			optionsJSON: registrationOptions,
+		}),
 		null,
 		() => {}, // ユーザーのキャンセルはrejectなのでエラーダイアログを出さない
 		i18n.ts._2fa.tapSecurityKey,
@@ -225,10 +229,11 @@ async function addSecurityKey() {
 	if (auth2.canceled) return;
 
 	await os.apiWithDialog('i/2fa/key-done', {
-		password: auth.result.password,
-		token: auth.result.token,
+		password: auth2.result.password,
+		token: auth2.result.token,
 		name: name.result,
-		credential,
+		// @ts-expect-error API schemaではWebAuthnの型を完全に表現できない
+		credential: credential,
 	});
 }
 

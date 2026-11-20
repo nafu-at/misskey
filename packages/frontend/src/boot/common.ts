@@ -5,22 +5,23 @@
 
 import { watch, version as vueVersion } from 'vue';
 import { compareVersions } from 'compare-versions';
-import { version, lang, apiUrl } from '@@/js/config.js';
+import { version, lang, isSafeMode } from '@@/js/config.js';
 import defaultLightTheme from '@@/themes/l-light.json5';
 import defaultDarkTheme from '@@/themes/d-green-lime.json5';
-import { createGtag, addGtag, consent as gtagConsent } from 'vue-gtag';// FIXME Google Analytics 周りの機能のチェック
+import { storeBootloaderErrors } from '@@/js/store-boot-errors';
+import { addGtag, consent as gtagConsent } from 'vue-gtag';
 import type { App } from 'vue';
 import type { GtagConsentParams } from '@/types/gtag';
 import widgets from '@/widgets/index.js';
 import directives from '@/directives/index.js';
 import components from '@/components/index.js';
-import { applyTheme } from '@/theme.js';
+import { themeManager } from '@/theme.js';
 import { isDeviceDarkmode } from '@/utility/is-device-darkmode.js';
 import { i18n } from '@/i18n.js';
 import { refreshCurrentAccount, login, updateCurrentAccountPartial } from '@/accounts.js';
 import { store } from '@/store.js';
 import { fetchInstance, instance } from '@/instance.js';
-import { deviceKind, updateDeviceKind } from '@/utility/device-kind.js';
+import { updateDeviceKind } from '@/utility/device-kind.js';
 import { reloadChannel } from '@/utility/unison-reload.js';
 import { getUrlWithoutLoginId } from '@/utility/login-id.js';
 import { getAccountFromId } from '@/utility/get-account-from-id.js';
@@ -32,8 +33,11 @@ import { prefer } from '@/preferences.js';
 import { sensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
 import { getDeviceId, setUserProperties } from '@/utility/tracking-user-properties.js';
 import { $i } from '@/i.js';
+import { launchPlugins } from '@/plugin.js';
 import { mainRouter } from '@/router.js';
+import { createNiraxGtag } from '@/utility/create-nirax-gtag.js';
 import { getAutoPostingLang, getDefaultViewingLangs } from '@/utility/posting-language.js';
+import { initTelemetry } from '@/telemetry.js';
 
 export async function common(createVue: () => Promise<App<Element>>) {
 	console.info(`Misskey v${version}`);
@@ -73,14 +77,29 @@ export async function common(createVue: () => Promise<App<Element>>) {
 	if (lastVersion !== version) {
 		miLocalStorage.setItem('lastVersion', version);
 
-		// テーマリビルドするため
-		miLocalStorage.removeItem('theme');
-
 		try { // 変なバージョン文字列来るとcompareVersionsでエラーになるため
 			if (lastVersion != null && compareVersions(version, lastVersion) === 1) {
 				isClientUpdated = true;
 			}
 		} catch (err) { /* empty */ }
+	}
+	//#endregion
+
+	//#region Detect language & fetch translations
+	storeBootloaderErrors({ ...i18n.ts._bootErrors, reload: i18n.ts.reload });
+
+	if (import.meta.hot) {
+		import.meta.hot.on('locale-update', async (updatedLang: string) => {
+			console.info(`Locale updated: ${updatedLang}`);
+			if (updatedLang === lang) {
+				await new Promise(resolve => {
+					window.setTimeout(resolve, 500);
+				});
+				// fetch with cache: 'no-store' to ensure the latest locale is fetched
+				await window.fetch(`/assets/locales/${lang}.${version}.json`, { cache: 'no-store' }).then(async res => res.status === 200 && await res.text());
+				window.location.reload();
+			}
+		});
 	}
 	//#endregion
 
@@ -92,23 +111,11 @@ export async function common(createVue: () => Promise<App<Element>>) {
 		window.history.replaceState(null, '', window.location.href.replace('#pswp', ''));
 	}
 
-	// URLに#pswpを含む場合は取り除く
-	if (window.location.hash === '#pswp') {
-		window.history.replaceState(null, '', window.location.href.replace('#pswp', ''));
-	}
-
 	// 一斉リロード
 	reloadChannel.addEventListener('message', path => {
 		if (path !== null) window.location.href = path;
 		else window.location.reload();
 	});
-
-	// If mobile, insert the viewport meta tag
-	if (['smartphone', 'tablet'].includes(deviceKind)) {
-		const viewport = window.document.getElementsByName('viewport').item(0);
-		viewport.setAttribute('content',
-			`${viewport.getAttribute('content')}, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover`);
-	}
 
 	//#region Set lang attr
 	const html = window.document.documentElement;
@@ -182,31 +189,6 @@ export async function common(createVue: () => Promise<App<Element>>) {
 	}
 	//#endregion
 
-	// NOTE: この処理は必ずクライアント更新チェック処理より後に来ること(テーマ再構築のため)
-	watch(store.r.darkMode, (darkMode) => {
-		applyTheme(darkMode
-			? (prefer.s.darkTheme ?? defaultDarkTheme)
-			: (prefer.s.lightTheme ?? defaultLightTheme),
-		);
-	}, { immediate: miLocalStorage.getItem('theme') == null });
-
-	window.document.documentElement.dataset.colorScheme = store.s.darkMode ? 'dark' : 'light';
-
-	const darkTheme = prefer.model('darkTheme');
-	const lightTheme = prefer.model('lightTheme');
-
-	watch(darkTheme, (theme) => {
-		if (store.s.darkMode) {
-			applyTheme(theme ?? defaultDarkTheme);
-		}
-	});
-
-	watch(lightTheme, (theme) => {
-		if (!store.s.darkMode) {
-			applyTheme(theme ?? defaultLightTheme);
-		}
-	});
-
 	//#region Sync dark mode
 	if (prefer.s.syncDeviceDarkMode) {
 		store.set('darkMode', isDeviceDarkmode());
@@ -219,17 +201,43 @@ export async function common(createVue: () => Promise<App<Element>>) {
 	});
 	//#endregion
 
-	if (prefer.s.darkTheme && store.s.darkMode) {
-		if (miLocalStorage.getItem('themeId') !== prefer.s.darkTheme.id) applyTheme(prefer.s.darkTheme);
-	} else if (prefer.s.lightTheme && !store.s.darkMode) {
-		if (miLocalStorage.getItem('themeId') !== prefer.s.lightTheme.id) applyTheme(prefer.s.lightTheme);
-	}
-
-	fetchInstanceMetaPromise.then(() => {
+	if (!isSafeMode) {
 		// TODO: instance.defaultLightTheme/instance.defaultDarkThemeが不正な形式だった場合のケア
 		if (prefer.s.lightTheme == null && instance.defaultLightTheme != null) prefer.commit('lightTheme', JSON.parse(instance.defaultLightTheme));
 		if (prefer.s.darkTheme == null && instance.defaultDarkTheme != null) prefer.commit('darkTheme', JSON.parse(instance.defaultDarkTheme));
-	});
+	}
+
+	// NOTE: この処理は必ずクライアント更新チェック処理より後に来ること(テーマ再構築のため)
+	// NOTE: この処理は必ずダークモード判定処理より後に来ること(初回のテーマ適用のため)
+	// NOTE: この処理は必ずサーバーテーマ適用処理より後に来ること(二重発火を防ぐため)
+	// see: https://github.com/misskey-dev/misskey/issues/16562
+	watch(store.r.darkMode, (darkMode) => {
+		const theme = (() => {
+			if (darkMode) {
+				return isSafeMode ? defaultDarkTheme : (prefer.s.darkTheme ?? defaultDarkTheme);
+			} else {
+				return isSafeMode ? defaultLightTheme : (prefer.s.lightTheme ?? defaultLightTheme);
+			}
+		})();
+
+		themeManager.updateTheme(theme);
+	}, { immediate: true });
+
+	window.document.documentElement.dataset.colorScheme = store.s.darkMode ? 'dark' : 'light';
+
+	if (!isSafeMode) {
+		watch(prefer.r.darkTheme, (theme) => {
+			if (store.s.darkMode) {
+				themeManager.updateTheme(theme ?? defaultDarkTheme);
+			}
+		});
+
+		watch(prefer.r.lightTheme, (theme) => {
+			if (!store.s.darkMode) {
+				themeManager.updateTheme(theme ?? defaultLightTheme);
+			}
+		});
+	}
 
 	watch(prefer.r.overridedDeviceKind, (kind) => {
 		updateDeviceKind(kind);
@@ -328,19 +336,7 @@ export async function common(createVue: () => Promise<App<Element>>) {
 	directives(app);
 	components(app);
 	if (instance.googleAnalyticsId) {
-		app.use(createGtag( {
-			tagId: instance.googleAnalyticsId,
-			config: {
-				anonymize_ip: false,
-				send_page_view: true,
-			},
-			pageTracker: {
-				router: mainRouter,
-				useScreenview: true,
-			},
-			initMode: 'manual',
-			appName: `Misskey v${version}`,
-		}));
+		app.use(createNiraxGtag(mainRouter, instance.googleAnalyticsId, `Misskey v${version}`));
 
 		const gtagConsentParams = miLocalStorage.getItemAsJson('gtagConsent') as GtagConsentParams ?? {
 			ad_storage: 'denied',
@@ -378,42 +374,7 @@ export async function common(createVue: () => Promise<App<Element>>) {
 		return root;
 	})();
 
-	if (instance.sentryForFrontend) {
-		const Sentry = await import('@sentry/vue');
-
-		Sentry.init({
-			app,
-			release: version,
-			integrations: [
-				...(instance.sentryForFrontend.vueIntegration !== undefined ? [
-					Sentry.vueIntegration(instance.sentryForFrontend.vueIntegration ?? undefined),
-				] : []),
-				...(instance.sentryForFrontend.browserTracingIntegration !== undefined ? [
-					Sentry.browserTracingIntegration(instance.sentryForFrontend.browserTracingIntegration ?? undefined),
-				] : []),
-				...(instance.sentryForFrontend.replayIntegration !== undefined ? [
-					Sentry.replayIntegration(instance.sentryForFrontend.replayIntegration ?? undefined),
-				] : []),
-			],
-
-			// Set tracesSampleRate to 1.0 to capture 100%
-			tracesSampleRate: 1.0,
-
-			// Set `tracePropagationTargets` to control for which URLs distributed tracing should be enabled
-			...(instance.sentryForFrontend.browserTracingIntegration !== undefined ? {
-				tracePropagationTargets: [apiUrl],
-			} : {}),
-
-			// Capture Replay for 10% of all sessions,
-			// plus for 100% of sessions with an error
-			...(instance.sentryForFrontend.replayIntegration !== undefined ? {
-				replaysSessionSampleRate: 0.1,
-				replaysOnErrorSampleRate: 1.0,
-			} : {}),
-
-			...instance.sentryForFrontend.options,
-		});
-	}
+	await initTelemetry(instance, app);
 
 	if (instance.sentryForFrontend || instance.googleAnalyticsId) {
 		const consentValue = sensitiveContentConsent.value === null ? 'unset' : String(sensitiveContentConsent.value);
@@ -422,6 +383,12 @@ export async function common(createVue: () => Promise<App<Element>>) {
 			sensitiveContentConsent: consentValue,
 			displayOfSensitiveAds: String(prefer.s.displayOfSensitiveAds),
 		});
+	}
+
+	try {
+		await launchPlugins();
+	} catch (error) {
+		console.error('Failed to launch plugins:', error);
 	}
 
 	app.mount(rootEl);

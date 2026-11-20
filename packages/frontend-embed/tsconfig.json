@@ -2,7 +2,7 @@
 	"compilerOptions": {
 		"allowJs": true,
 		"noEmitOnError": false,
-		"noImplicitAny": false,
+		"noImplicitAny": true,
 		"noImplicitReturns": true,
 		"noUnusedParameters": false,
 		"noUnusedLocals": false,
@@ -10,11 +10,13 @@
 		"declaration": false,
 		"sourceMap": true,
 		"sourceRoot": "/",
+		"rootDir": "..",
 		"inlineSources": true,
 		"target": "ES2022",
 		"module": "ES2022",
 		"moduleResolution": "bundler",
 		"removeComments": false,
+		"skipLibCheck": true,
 		"noLib": false,
 		"strict": true,
 		"strictNullChecks": true,
@@ -24,7 +26,6 @@
 		"isolatedModules": true,
 		"useDefineForClassFields": true,
 		"verbatimModuleSyntax": true,
-		"baseUrl": ".",
 		"paths": {
 			"@/*": ["./src/*"],
 			"@@/*": ["../frontend-shared/*"]

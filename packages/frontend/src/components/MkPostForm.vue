@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 <template>
 <div
-	:class="[$style.root, { [$style.modal]: modal, _popup: modal }]"
+	:class="$style.root"
 	@dragover.stop="onDragover"
 	@dragenter="onDragenter"
 	@dragleave="onDragleave"
@@ -14,13 +14,14 @@ SPDX-License-Identifier: AGPL-3.0-only
 	<header :class="$style.header">
 		<div :class="$style.headerLeft">
 			<button v-if="!fixed" :class="$style.cancel" class="_button" @click="cancel"><i class="ti ti-x"></i></button>
-			<button v-click-anime v-tooltip="i18n.ts.switchAccount" :class="$style.account" class="_button" @click="openAccountMenu">
+			<button ref="accountMenuEl" v-click-anime v-tooltip="i18n.ts.switchAccount" :class="$style.account" class="_button" :disabled="draftProcessing" @click="openAccountMenu">
 				<MkAvatar :user="postAccount ?? $i" :class="$style.avatar"/>
 			</button>
+			<button v-if="$i.policies.noteDraftLimit > 0" v-tooltip="(postAccount != null && postAccount.id !== $i.id) ? null : i18n.ts.draft" class="_button" :class="$style.draftButton" :disabled="draftProcessing || (postAccount != null && postAccount.id !== $i.id)" @click="showDraftMenu"><i class="ti ti-pencil-minus"></i></button>
 		</div>
 		<div :class="$style.headerRight">
-			<template v-if="!(channel != null && fixed)">
-				<button v-if="channel == null" ref="visibilityButton" v-tooltip="i18n.ts.visibility" :class="['_button', $style.headerRightItem, $style.visibility]" @click="setVisibility">
+			<template v-if="!(targetChannel != null && fixed)">
+				<button v-if="targetChannel == null" ref="visibilityButton" v-tooltip="i18n.ts.visibility" :class="['_button', $style.headerRightItem, $style.visibility]" @click="setVisibility">
 					<span v-if="visibility === 'public'"><i class="ti ti-world"></i></span>
 					<span v-if="visibility === 'home'"><i class="ti ti-home"></i></span>
 					<span v-if="visibility === 'followers'"><i class="ti ti-lock"></i></span>
@@ -29,18 +30,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 				</button>
 				<button v-else class="_button" :class="[$style.headerRightItem, $style.visibility]" disabled>
 					<span><i class="ti ti-device-tv"></i></span>
-					<span :class="$style.headerRightButtonText">{{ channel.name }}</span>
+					<span :class="$style.headerRightButtonText">{{ targetChannel.name }}</span>
 				</button>
 			</template>
-			<button v-tooltip="i18n.ts._visibility.disableFederation" class="_button" :class="[$style.headerRightItem, { [$style.danger]: localOnly }]" :disabled="channel != null || visibility === 'specified' || isPrivateDimension" @click="toggleLocalOnly">
+			<button v-if="visibility !== 'specified'" v-tooltip="i18n.ts._visibility.disableFederation" class="_button" :class="[$style.headerRightItem, { [$style.danger]: localOnly }]" :disabled="targetChannel != null || isPrivateDimension" @click="toggleLocalOnly">
 				<span v-if="!localOnly"><i class="ti ti-rocket"></i></span>
 				<span v-else><i class="ti ti-rocket-off"></i></span>
 			</button>
 			<button ref="otherSettingsButton" v-tooltip="i18n.ts.other" class="_button" :class="$style.headerRightItem" @click="showOtherSettings"><i class="ti ti-dots"></i></button>
-			<button v-if="!props.instant" v-click-anime v-tooltip="i18n.ts.drafts" class="_button" :class="$style.headerRightItem" @click="openDrafts">
-				<i class="ti ti-pencil"></i>
-			</button>
-			<button v-click-anime class="_button" :class="$style.submit" :disabled="!canPost" data-cy-open-post-form-submit @click="post">
+			<button ref="submitButtonEl" v-click-anime class="_button" :class="$style.submit" :disabled="!canPost" data-testid="post-form-submit" @click="post">
 				<div :class="$style.submitInner">
 					<template v-if="posted"></template>
 					<template v-else-if="posting"><MkEllipsis/></template>
@@ -49,9 +47,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 							{{ submitText }}
 						</span>
 					</template>
-					<span>
-						<i :class="posted ? 'ti ti-check' : reply ? 'ti ti-arrow-back-up' : renoteTargetNote ? 'ti ti-quote' : 'ti ti-send'"></i>
-					</span>
+					<i style="margin-left: 6px;" :class="submitIcon"></i>
 				</div>
 			</button>
 		</div>
@@ -59,7 +55,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 	<MkInfo v-if="isPrivateDimension" warn style="margin-top: 8px;">
 		<Mfm :text="i18n.tsx._postForm.dimensionPrivateNotice({ dimension })"/>
 	</MkInfo>
-	<MkNoteSimple v-if="reply" :class="$style.targetNote" :note="reply"/>
+	<MkNoteSimple v-if="replyTargetNote" :class="$style.targetNote" :note="replyTargetNote"/>
 	<MkNoteSimple v-if="renoteTargetNote" :class="$style.targetNote" :note="renoteTargetNote"/>
 	<div v-if="quoteId" :class="$style.withQuote"><i class="ti ti-quote"></i> {{ i18n.ts.quoteAttached }}<button @click="quoteId = null; renoteTargetNote = null;"><i class="ti ti-x"></i></button></div>
 	<div v-if="visibility === 'specified'" :class="$style.toSpecified">
@@ -67,83 +63,87 @@ SPDX-License-Identifier: AGPL-3.0-only
 		<div :class="$style.visibleUsers">
 			<span v-for="u in visibleUsers" :key="u.id" :class="$style.visibleUser">
 				<MkAcct :user="u"/>
-				<button class="_button" style="padding: 4px 8px;" @click="removeVisibleUser(u)"><i class="ti ti-x"></i></button>
+				<button class="_button" style="padding: 4px 8px;" @click="removeVisibleUser(u.id)"><i class="ti ti-x"></i></button>
 			</span>
 			<button class="_buttonPrimary" style="padding: 4px; border-radius: 8px;" @click="addVisibleUser"><i class="ti ti-plus ti-fw"></i></button>
 		</div>
 	</div>
+	<MkInfo v-if="!store.r.tips.value.postForm" :class="$style.showHowToUse" closable @close="closeTip('postForm')">
+		<button class="_textButton" @click="showTour">{{ i18n.ts._postForm.showHowToUse }}</button>
+	</MkInfo>
+	<MkInfo v-if="scheduledAt != null" :class="$style.scheduledAt">
+		<I18n :src="i18n.ts.scheduleToPostOnX" tag="span">
+			<template #x>
+				<MkTime :time="scheduledAt" :mode="'detail'" style="font-weight: bold;"/>
+			</template>
+		</I18n> - <button class="_textButton" @click="cancelSchedule()">{{ i18n.ts.cancel }}</button>
+		<div v-if="scheduledTimeExceededPolicy" style="margin-top: 4px; color: var(--MI_THEME-infoWarnFg)">
+			<Mfm :text="i18n.tsx._postForm.policyScheduleNoteMaxDaysExceeded({ max: $i.policies.scheduleNoteMaxDays })"/>
+		</div>
+	</MkInfo>
 	<MkInfo v-if="hasNotSpecifiedMentions" warn :class="$style.hasNotSpecifiedMentions">{{ i18n.ts.notSpecifiedMentionWarning }} - <button class="_textButton" @click="addMissingMention()">{{ i18n.ts.add }}</button></MkInfo>
 	<div v-show="useCw" :class="$style.cwOuter">
 		<input ref="cwInputEl" v-model="cw" class="mk-input-text" :class="$style.cw" :placeholder="i18n.ts.annotation" @keydown="onKeydown" @keyup="onKeyup" @compositionend="onCompositionEnd">
 		<div v-if="maxCwTextLength - cwTextLength < 20" :class="['_acrylic', $style.cwTextCount, { [$style.cwTextOver]: cwTextLength > maxCwTextLength }]">{{ maxCwTextLength - cwTextLength }}</div>
 	</div>
 	<div :class="[$style.textOuter, { [$style.withCw]: useCw }]">
-		<div v-if="channel" :class="$style.colorBar" :style="{ background: channel.color }"></div>
-		<textarea ref="textareaEl" v-model="text" :class="[$style.text]" :disabled="posting || posted" :readonly="textAreaReadOnly" :placeholder="placeholder" data-cy-post-form-text @keydown="onKeydown" @keyup="onKeyup" @paste="onPaste" @compositionupdate="onCompositionUpdate" @compositionend="onCompositionEnd"/>
+		<div v-if="targetChannel" :class="$style.colorBar" :style="{ background: targetChannel.color }"></div>
+		<textarea ref="textareaEl" v-model="text" :class="[$style.text]" :disabled="posting || posted" :readonly="textAreaReadOnly" :placeholder="placeholder" data-testid="post-form-text" @keydown="onKeydown" @keyup="onKeyup" @paste="onPaste" @compositionupdate="onCompositionUpdate" @compositionend="onCompositionEnd"></textarea>
 		<div v-if="maxTextLength - textLength < 100" :class="['_acrylic', $style.textCount, { [$style.textOver]: textLength > maxTextLength }]">{{ maxTextLength - textLength }}</div>
 	</div>
 	<input v-show="withHashtags" ref="hashtagsInputEl" v-model="hashtags" class="mk-input-text" :class="$style.hashtags" :placeholder="i18n.ts.hashtags" list="hashtags">
-	<div v-if="scheduledTime" :class="$style.scheduledTime">
-		<div>
-			<div style="display: flex; gap: 4px" :style="scheduledTimeExceededPolicy ? 'color: var(--MI_THEME-error)' : undefined">
-				<span style="margin-right: 4px"><i class="ti ti-calendar-clock"></i></span>
-				<component :is="scheduledTimeExceededPolicy ? 'del' : 'span'" :style="scheduledTimeExceededPolicy ? 'opacity: 0.6' : undefined">
-					{{ i18n.tsx.willBePostedAt({ x: dateTimeFormat.format(scheduledTime) }) }}
-				</component>
-			</div>
-			<div v-if="scheduledTimeExceededPolicy" style="display: flex; gap: 4px; margin-top: 4px; color: var(--MI_THEME-infoWarnFg)">
-				<span style="margin-right: 4px"><i class="ti ti-exclamation-circle"></i></span>
-				<Mfm :text="i18n.tsx._postForm.policyScheduleNoteMaxDaysExceeded({ max: $i.policies.scheduleNoteMaxDays })"/>
-			</div>
-		</div>
-		<button class="_button" style="margin-left: auto" @click="scheduledTime = null"><i class="ti ti-x"></i></button>
-	</div>
 	<MkInfo v-if="files.length > 0 && instance.tosUrl" warn style="margin-top: 8px;" :rounded="false">
 		<Mfm :text="i18n.tsx._postForm.tosAndGuidelinesInfo({ tosUrl: instance.tosUrl, postingGuidelinesUrl: instance.postingGuidelinesUrl ?? '' })"/>
 	</MkInfo>
-	<XPostFormAttaches v-model="files" @detach="detachFile" @changeSensitive="updateFileSensitive" @changeAiGenerated="updateAiGenerated" @changeName="updateFileName" @replaceFile="replaceFile"/>
+	<XPostFormAttaches v-model="files" @detach="detachFile" @changeSensitive="updateFileSensitive" @changeAiGenerated="updateFileAiGenerated" @changeName="updateFileName"/>
+	<div v-if="uploader.items.value.length > 0" style="padding: 12px;">
+		<MkTip k="postFormUploader">
+			{{ i18n.ts._postForm.uploaderTip }}
+		</MkTip>
+		<MkUploaderItems :items="uploader.items.value" @showMenu="(item, ev) => showPerUploadItemMenu(item, ev)" @showMenuViaContextmenu="(item, ev) => showPerUploadItemMenuViaContextmenu(item, ev)"/>
+	</div>
 	<MkPollEditor v-if="poll" v-model="poll" @destroyed="poll = null"/>
 	<MkNotePreview v-if="showPreview" :class="$style.preview" :text="text" :files="files" :poll="poll ?? undefined" :useCw="useCw" :cw="cw" :user="postAccount ?? $i"/>
 	<div v-if="showingOptions" style="padding: 8px 16px;">
 	</div>
-	<footer :class="$style.footer">
+	<footer ref="footerEl" :class="$style.footer">
 		<div :class="$style.footerLeft">
-			<button v-tooltip="i18n.ts.attachFile" class="_button" :class="$style.footerButton" @click="chooseFileFrom"><i class="ti ti-photo-plus"></i></button>
+			<button v-tooltip="i18n.ts.attachFile + ' (' + i18n.ts.upload + ')'" class="_button" :class="$style.footerButton" @click="chooseFileFromPc"><i class="ti ti-photo-plus"></i></button>
+			<button v-tooltip="i18n.ts.attachFile + ' (' + i18n.ts.fromDrive + ')'" class="_button" :class="$style.footerButton" @click="chooseFileFromDrive"><i class="ti ti-cloud-download"></i></button>
 			<button v-tooltip="i18n.ts.poll" class="_button" :class="[$style.footerButton, { [$style.footerButtonActive]: poll }]" @click="togglePoll"><i class="ti ti-chart-arrows"></i></button>
 			<button v-tooltip="i18n.ts.useCw" class="_button" :class="[$style.footerButton, { [$style.footerButtonActive]: useCw }]" @click="useCw = !useCw"><i class="ti ti-eye-off"></i></button>
-			<button v-tooltip="i18n.ts.mention" class="_button" :class="$style.footerButton" @click="insertMention"><i class="ti ti-at"></i></button>
 			<button v-tooltip="i18n.ts.hashtags" class="_button" :class="[$style.footerButton, { [$style.footerButtonActive]: withHashtags }]" @click="withHashtags = !withHashtags"><i class="ti ti-hash"></i></button>
-			<button v-if="$i.policies.canScheduleNote" v-tooltip="i18n.ts.setScheduledTime" class="_button" :class="$style.footerButton" @click="setScheduledTime"><i class="ti ti-calendar-clock"></i></button>
-			<button v-if="postFormActions.length > 0" v-tooltip="i18n.ts.plugins" class="_button" :class="$style.footerButton" @click="showActions"><i class="ti ti-plug"></i></button>
-			<button v-tooltip="i18n.ts.emoji" :class="['_button', $style.footerButton]" @click="insertEmoji"><i class="ti ti-mood-happy"></i></button>
+			<button v-if="$i.policies.canScheduleNote && $i.policies.scheduleNoteLimit > 0" v-tooltip="i18n.ts.schedulePost" class="_button" :class="$style.footerButton" @click="schedule"><i class="ti ti-calendar-clock"></i></button>
+			<button v-tooltip="i18n.ts.mention" class="_button" :class="$style.footerButton" @click="insertMention"><i class="ti ti-at"></i></button>
 			<button v-if="showAddMfmFunction" v-tooltip="i18n.ts.addMfmFunction" :class="['_button', $style.footerButton]" @click="insertMfmFunction"><i class="ti ti-palette"></i></button>
+			<button v-if="postFormActions.length > 0" v-tooltip="i18n.ts.plugins" class="_button" :class="$style.footerButton" @click="showActions"><i class="ti ti-plug"></i></button>
 		</div>
 		<div :class="$style.footerRight">
-			<button v-tooltip="i18n.ts.previewNoteText" class="_button" :class="[$style.footerButton, { [$style.previewButtonActive]: showPreview }]" @click="showPreview = !showPreview"><i class="ti ti-eye"></i></button>
-			<!--<button v-tooltip="i18n.ts.more" class="_button" :class="$style.footerButton" @click="showingOptions = !showingOptions"><i class="ti ti-dots"></i></button>-->
+			<button v-tooltip="i18n.ts.emoji" :class="['_button', $style.footerButton]" @click="insertEmoji"><i class="ti ti-mood-happy"></i></button>
 		</div>
 	</footer>
 	<datalist id="hashtags">
-		<option v-for="hashtag in recentHashtags" :key="hashtag" :value="hashtag"/>
+		<option v-for="hashtag in recentHashtags" :key="hashtag" :value="hashtag"></option>
 	</datalist>
 </div>
 </template>
 
 <script lang="ts" setup>
-import { inject, watch, nextTick, onMounted, onUnmounted, defineAsyncComponent, provide, shallowRef, ref, computed, useTemplateRef } from 'vue';
+import { watch, nextTick, onMounted, onUnmounted, defineAsyncComponent, provide, shallowRef, ref, reactive, computed, useTemplateRef } from 'vue';
 import * as mfm from 'mfm-js';
 import * as Misskey from 'misskey-js';
 import insertTextAtCursor from 'insert-text-at-cursor';
 import { toASCII } from 'punycode.js';
+import { host, url } from '@@/js/config.js';
+import MkUploaderItems from './MkUploaderItems.vue';
 import type { ShallowRef } from 'vue';
 import type { PostFormProps } from '@/types/post-form.js';
 import type { MenuItem } from '@/types/menu.js';
+import type { PollEditorModelValue } from '@/components/MkPollEditor.vue';
+import type { UploaderItem } from '@/composables/use-uploader.js';
 import MkNotePreview from '@/components/MkNotePreview.vue';
 import XPostFormAttaches from '@/components/MkPostFormAttaches.vue';
 import MkPollEditor from '@/components/MkPollEditor.vue';
-import type { PollEditorModelValue } from '@/components/MkPollEditor.vue';
-import MkDraftsDialog from '@/components/MkDraftsDialog.vue';
-import { host, url } from '@@/js/config.js';
 import XTextCounter from '@/components/MkPostForm.TextCounter.vue';
 import MkNoteSimple from '@/components/MkNoteSimple.vue';
 import { erase, unique } from '@/utility/array.js';
@@ -152,30 +152,31 @@ import { formatTimeString } from '@/utility/format-time-string.js';
 import { Autocomplete } from '@/utility/autocomplete.js';
 import * as os from '@/os.js';
 import { misskeyApi } from '@/utility/misskey-api.js';
-import { selectFiles } from '@/utility/select-file.js';
+import { chooseDriveFile } from '@/utility/drive.js';
 import { store } from '@/store.js';
 import MkInfo from '@/components/MkInfo.vue';
 import { i18n } from '@/i18n.js';
 import { instance } from '@/instance.js';
 import { ensureSignin, notesCount, incNotesCount } from '@/i.js';
-import { getAccounts, openAccountMenu as openAccountMenu_ } from '@/accounts.js';
-import { uploadFile } from '@/utility/upload.js';
+import { getAccounts, getAccountMenu } from '@/accounts.js';
 import { deepClone } from '@/utility/clone.js';
 import MkRippleEffect from '@/components/MkRippleEffect.vue';
 import { miLocalStorage } from '@/local-storage.js';
-import { dateTimeFormat } from '@/utility/intl-const.js';
 import { claimAchievement } from '@/utility/achievements.js';
 import { mfmFunctionPicker } from '@/utility/mfm-function-picker.js';
 import { langmap } from '@/utility/langmap.js';
+import type { PostingLanguage } from '@/utility/langmap.js';
 import { selectDimension } from '@/utility/dimension.js';
 import { selectPostingLanguage } from '@/utility/posting-language.js';
 import { prefer } from '@/preferences.js';
 import { getPluginHandlers } from '@/plugin.js';
 import { DI } from '@/di.js';
+import { checkDragDataType, getDragData } from '@/drag-and-drop.js';
+import { useUploader } from '@/composables/use-uploader.js';
+import { startTour } from '@/utility/tour.js';
+import { closeTip } from '@/tips.js';
 
 const $i = ensureSignin();
-
-const modal = inject(DI.inModal, false);
 
 const props = withDefaults(defineProps<PostFormProps & {
 	fixed?: boolean;
@@ -208,13 +209,12 @@ const cwInputEl = useTemplateRef('cwInputEl');
 const hashtagsInputEl = useTemplateRef('hashtagsInputEl');
 const visibilityButton = useTemplateRef('visibilityButton');
 const otherSettingsButton = useTemplateRef('otherSettingsButton');
+const accountMenuEl = useTemplateRef('accountMenuEl');
+const footerEl = useTemplateRef('footerEl');
+const submitButtonEl = useTemplateRef('submitButtonEl');
 
 const posting = ref(false);
 const posted = ref(false);
-const draftId = ref<string>(Date.now().toString());
-const reply: ShallowRef<PostFormProps['renote'] | null> = ref(props.reply ?? null);
-const renote = shallowRef(props.renote ?? null);
-const channel = ref(props.channel ?? null);
 const text = ref(props.initialText ?? '');
 const files = ref(props.initialFiles ?? []);
 const poll = ref<PollEditorModelValue | null>(null);
@@ -227,16 +227,19 @@ const cw = ref<string | null>(props.initialCw ?? null);
 const localOnly = ref(props.initialLocalOnly ?? (prefer.s.rememberNoteVisibility ? store.s.localOnly : prefer.s.defaultNoteLocalOnly));
 const dimension = ref<number>(props.initialDimension ?? store.r.tl.value?.dimensionBySrc?.[store.r.tl.value.src] ?? prefer.s.dimension);
 const isPrivateDimension = computed(() => dimension.value >= 1000);
-const postingLang = ref<string | null>(null);
+const postingLang = ref<PostingLanguage | null>(null);
 const visibility = ref(props.initialVisibility ?? (prefer.s.rememberNoteVisibility ? store.s.visibility : prefer.s.defaultNoteVisibility));
 const visibleUsers = ref<Misskey.entities.UserDetailed[]>([]);
 if (props.initialVisibleUsers) {
 	props.initialVisibleUsers.forEach(u => pushVisibleUser(u));
 }
 const reactionAcceptance = ref(store.s.reactionAcceptance);
-const scheduledTime = ref<Date | null>(null);
+const scheduledAt = ref<number | null>(null);
+const noExtractMentions = ref(false);
+const noExtractHashtags = ref(false);
+const noExtractEmojis = ref(false);
 const scheduledTimeExceededPolicy = computed(() =>
-	scheduledTime.value ? (scheduledTime.value.getTime() - Date.now()) / 86_400_000 > $i!.policies.scheduleNoteMaxDays : false
+	scheduledAt.value != null ? (scheduledAt.value - Date.now()) / 86_400_000 > $i.policies.scheduleNoteMaxDays : false
 );
 const autocompleteTextareaInput = ref<Autocomplete | null>(null);
 const autocompleteCwInput = ref<Autocomplete | null>(null);
@@ -249,29 +252,38 @@ const imeText = ref('');
 const showingOptions = ref(false);
 const textAreaReadOnly = ref(false);
 const justEndedComposition = ref(false);
-const renoteTargetNote: ShallowRef<PostFormProps['renote'] | null> = shallowRef(props.renote);
+const renoteTargetNote: ShallowRef<PostFormProps['renote'] | null> = shallowRef(props.renote ?? null);
+const replyTargetNote: ShallowRef<PostFormProps['reply'] | null> = shallowRef(props.reply ?? null);
+const targetChannel = shallowRef(props.channel ?? null);
+
+const serverDraftId = ref<string | null>(null);
+const draftProcessing = ref(false);
 const postFormActions = getPluginHandlers('post_form_action');
 
-const draftKey = computed((): string => {
-	let key = channel.value ? `channel:${channel.value.id}` : '';
+let textAutocomplete: Autocomplete | null = null;
+let cwAutocomplete: Autocomplete | null = null;
+let hashtagAutocomplete: Autocomplete | null = null;
 
-	if (renote.value) {
-		key += `renote:${renote.value.id}`;
-	} else if (reply.value) {
-		key += `reply:${reply.value.id}`;
-	} else {
-		key += `note:${draftId.value}`;
-	}
+const uploader = useUploader({
+	multiple: true,
+});
 
-	return key;
+onUnmounted(() => {
+	uploader.dispose();
+});
+
+uploader.events.on('itemUploaded', ctx => {
+	if (!uploader.items.value.includes(ctx.item)) return;
+	files.value.push(ctx.item.uploaded!);
+	uploader.removeItem(ctx.item);
 });
 
 const placeholder = computed((): string => {
-	if (renote.value) {
+	if (renoteTargetNote.value) {
 		return i18n.ts._postForm.quotePlaceholder;
-	} else if (reply.value) {
+	} else if (replyTargetNote.value) {
 		return i18n.ts._postForm.replyPlaceholder;
-	} else if (channel.value) {
+	} else if (targetChannel.value) {
 		return i18n.ts._postForm.channelPlaceholder;
 	} else {
 		const xs = [
@@ -287,15 +299,17 @@ const placeholder = computed((): string => {
 });
 
 const submitText = computed((): string => {
-	if (scheduledTime.value) {
-		return i18n.ts.schedule;
-	} else if (renote.value) {
-		return i18n.ts.quote;
-	} else if (reply.value) {
-		return i18n.ts.reply;
-	} else {
-		return i18n.ts.note;
-	}
+	return scheduledAt.value != null
+		? i18n.ts.schedule
+		: renoteTargetNote.value
+			? i18n.ts.quote
+			: replyTargetNote.value
+				? i18n.ts.reply
+				: i18n.ts.note;
+});
+
+const submitIcon = computed((): string => {
+	return posted.value ? 'ti ti-check' : scheduledAt.value != null ? 'ti ti-calendar-time' : replyTargetNote.value ? 'ti ti-arrow-back-up' : renoteTargetNote.value ? 'ti ti-quote' : 'ti ti-send';
 });
 
 const textLength = computed((): number => {
@@ -316,12 +330,16 @@ const canPost = computed((): boolean => {
 	return !props.mock
 		&& !posting.value
 		&& !posted.value
+		&& !draftProcessing.value
+		&& !uploader.uploading.value
+		&& (uploader.items.value.length === 0 || uploader.readyForUpload.value)
 		&& (
 			1 <= textLength.value ||
 			1 <= files.value.length ||
+			1 <= uploader.items.value.length ||
 			poll.value != null ||
-			renote.value != null ||
-			(reply.value != null && quoteId.value != null)
+			renoteTargetNote.value != null ||
+			(replyTargetNote.value != null && quoteId.value != null)
 		)
 		&& (
 			useCw.value ?
@@ -331,13 +349,19 @@ const canPost = computed((): boolean => {
 				) : true
 		)
 		&& (textLength.value <= maxTextLength.value)
+		&& (files.value.length <= 16)
 		&& (!poll.value || poll.value.choices.length >= 2)
 		&& !scheduledTimeExceededPolicy.value
 	;
 });
 
-const withHashtags = computed(store.makeGetterSetter('postFormWithHashtags'));
-const hashtags = computed(store.makeGetterSetter('postFormHashtags'));
+// cannot save pure renote as draft
+const canSaveAsServerDraft = computed((): boolean => {
+	return canPost.value && (textLength.value > 0 || files.value.length > 0 || uploader.items.value.length > 0 || poll.value != null);
+});
+
+const withHashtags = store.model('postFormWithHashtags');
+const hashtags = store.model('postFormHashtags');
 
 watch(text, () => {
 	checkMissingMention();
@@ -371,13 +395,13 @@ if (props.mention) {
 	text.value += ' ';
 }
 
-if (reply.value && (reply.value.user.username !== $i.username || (reply.value.user.host != null && reply.value.user.host !== host))) {
-	text.value = `@${reply.value.user.username}${reply.value.user.host != null ? '@' + toASCII(reply.value.user.host) : ''} `;
+if (replyTargetNote.value && (replyTargetNote.value.user.username !== $i.username || (replyTargetNote.value.user.host != null && replyTargetNote.value.user.host !== host))) {
+	text.value = `@${replyTargetNote.value.user.username}${replyTargetNote.value.user.host != null ? '@' + toASCII(replyTargetNote.value.user.host) : ''} `;
 }
 
-if (reply.value && reply.value.text != null) {
-	const ast = mfm.parse(reply.value.text);
-	const otherHost = reply.value.user.host;
+if (replyTargetNote.value && replyTargetNote.value.text != null) {
+	const ast = mfm.parse(replyTargetNote.value.text);
+	const otherHost = replyTargetNote.value.user.host;
 
 	for (const x of extractMentions(ast)) {
 		const mention = x.host ?
@@ -400,32 +424,32 @@ if ($i.isSilenced && visibility.value === 'public') {
 	visibility.value = 'home';
 }
 
-if (channel.value) {
+if (targetChannel.value) {
 	visibility.value = 'public';
 	localOnly.value = true; // TODO: チャンネルが連合するようになった折には消す
 }
 
 // 公開以外へのリプライ時は元の公開範囲を引き継ぐ
-if (reply.value && ['home', 'followers', 'specified'].includes(reply.value.visibility)) {
-	if (reply.value.visibility === 'home' && visibility.value === 'followers') {
+if (replyTargetNote.value && ['home', 'followers', 'specified'].includes(replyTargetNote.value.visibility)) {
+	if (replyTargetNote.value.visibility === 'home' && visibility.value === 'followers') {
 		visibility.value = 'followers';
-	} else if (['home', 'followers'].includes(reply.value.visibility) && visibility.value === 'specified') {
+	} else if (['home', 'followers'].includes(replyTargetNote.value.visibility) && visibility.value === 'specified') {
 		visibility.value = 'specified';
 	} else {
-		visibility.value = reply.value.visibility;
+		visibility.value = replyTargetNote.value.visibility;
 	}
 
 	if (visibility.value === 'specified') {
-		if (reply.value.visibleUserIds) {
+		if (replyTargetNote.value.visibleUserIds) {
 			misskeyApi('users/show', {
-				userIds: reply.value.visibleUserIds.filter(uid => uid !== $i.id && uid !== reply.value?.userId),
+				userIds: replyTargetNote.value.visibleUserIds.filter(uid => uid !== $i.id && uid !== replyTargetNote.value?.userId),
 			}).then(users => {
 				users.forEach(u => pushVisibleUser(u));
 			});
 		}
 
-		if (reply.value.userId !== $i.id) {
-			misskeyApi('users/show', { userId: reply.value.userId }).then(user => {
+		if (replyTargetNote.value.userId !== $i.id) {
+			misskeyApi('users/show', { userId: replyTargetNote.value.userId }).then(user => {
 				pushVisibleUser(user);
 			});
 		}
@@ -438,24 +462,9 @@ if (props.specified) {
 }
 
 // keep cw when reply
-if (prefer.s.keepCw && reply.value?.cw) {
+if (prefer.s.keepCw && replyTargetNote.value && replyTargetNote.value.cw) {
 	useCw.value = true;
-	cw.value = reply.value.cw;
-}
-
-function watchForDraft() {
-	watch(text, () => saveDraft());
-	watch(useCw, () => saveDraft());
-	watch(cw, () => saveDraft());
-	watch(poll, () => saveDraft());
-	watch(files, () => saveDraft(), { deep: true });
-	watch(visibility, () => saveDraft());
-	watch(localOnly, () => saveDraft());
-	watch(postingLang, () => saveDraft());
-	watch(dimension, () => saveDraft());
-	watch(quoteId, () => saveDraft());
-	watch(reactionAcceptance, () => saveDraft());
-	watch(scheduledTime, () => saveDraft());
+	cw.value = replyTargetNote.value.cw;
 }
 
 function checkMissingMention() {
@@ -463,7 +472,7 @@ function checkMissingMention() {
 		const ast = mfm.parse(text.value);
 
 		for (const x of extractMentions(ast)) {
-			if (!visibleUsers.value.some(u => (u.username === x.username) && (u.host === x.host))) {
+			if (!visibleUsers.value.some(u => (u.username === x.username) && ((u.host === x.host) || (x.host === host && u.host == null)))) {
 				hasNotSpecifiedMentions.value = true;
 				return;
 			}
@@ -498,7 +507,7 @@ function togglePoll() {
 }
 
 function addTag(tag: string) {
-	insertTextAtCursor(textareaEl.value, ` #${tag} `);
+	if (textareaEl.value) insertTextAtCursor(textareaEl.value, ` #${tag} `);
 }
 
 function focus() {
@@ -508,53 +517,48 @@ function focus() {
 	}
 }
 
-function chooseFileFrom(ev) {
+function chooseFileFromPc(ev: PointerEvent) {
 	if (props.mock) return;
 
-	selectFiles(ev.currentTarget ?? ev.target, i18n.ts.attachFile).then(files_ => {
-		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-		for (const file of files_.filter(f => f?.id)) {
-			files.value.push(file);
-		}
+	os.chooseFileFromPc({ multiple: true }).then(files => {
+		if (files.length === 0) return;
+		uploader.addFiles(files);
 	});
 }
 
-function detachFile(id) {
+function chooseFileFromDrive(ev: PointerEvent) {
+	if (props.mock) return;
+
+	chooseDriveFile({ multiple: true }).then(driveFiles => {
+		files.value.push(...driveFiles);
+	});
+}
+
+function detachFile(id: Misskey.entities.DriveFile['id']) {
 	files.value = files.value.filter(x => x.id !== id);
 }
 
-function updateFileSensitive(file, sensitive) {
+function updateFileSensitive(file: Misskey.entities.DriveFile, isSensitive: boolean) {
 	if (props.mock) {
-		emit('fileChangeSensitive', file.id, sensitive);
+		emit('fileChangeSensitive', file.id, isSensitive);
 	}
-	files.value[files.value.findIndex(x => x.id === file.id)].isSensitive = sensitive;
+	files.value[files.value.findIndex(x => x.id === file.id)].isSensitive = isSensitive;
 }
 
-function updateAiGenerated(file, aiGenerated) {
+function updateFileAiGenerated(file: Misskey.entities.DriveFile, isAiGenerated: boolean) {
 	if (props.mock) {
-		emit('fileChangeAiGenerated', file.id, aiGenerated);
+		emit('fileChangeAiGenerated', file.id, isAiGenerated);
 	}
-	files.value[files.value.findIndex(x => x.id === file.id)].isAiGenerated = aiGenerated;
+	const attachment = files.value.find(x => x.id === file.id);
+	if (attachment) attachment.isAiGenerated = isAiGenerated;
 }
 
-function updateFileName(file, name) {
+function updateFileName(file: Misskey.entities.DriveFile, name: Misskey.entities.DriveFile['name']) {
 	files.value[files.value.findIndex(x => x.id === file.id)].name = name;
 }
 
-function replaceFile(file: Misskey.entities.DriveFile, newFile: Misskey.entities.DriveFile): void {
-	files.value[files.value.findIndex(x => x.id === file.id)] = newFile;
-}
-
-function upload(file: File, name?: string): void {
-	if (props.mock) return;
-
-	uploadFile(file, prefer.s.uploadFolder, name).then(res => {
-		if (res.id) files.value.push(res);
-	});
-}
-
 async function setVisibility() {
-	if (channel.value) {
+	if (targetChannel.value) {
 		visibility.value = 'public';
 		localOnly.value = true; // TODO: チャンネルが連合するようになった折には消す
 		return;
@@ -563,9 +567,8 @@ async function setVisibility() {
 	await os.popup(defineAsyncComponent(() => import('@/components/MkVisibilityPicker.vue')), {
 		currentVisibility: visibility.value,
 		isSilenced: $i.isSilenced,
-		localOnly: localOnly.value,
-		src: visibilityButton.value,
-		...(reply.value ? { isReplyVisibilitySpecified: reply.value.visibility === 'specified' } : {}),
+		anchorElement: visibilityButton.value ?? undefined,
+		...(replyTargetNote.value ? { isReplyVisibilitySpecified: replyTargetNote.value.visibility === 'specified' } : {}),
 	}, {
 		changeVisibility: v => {
 			visibility.value = v;
@@ -577,7 +580,7 @@ async function setVisibility() {
 }
 
 async function toggleLocalOnly() {
-	if (channel.value) {
+	if (targetChannel.value) {
 		visibility.value = 'public';
 		localOnly.value = true; // TODO: チャンネルが連合するようになった折には消す
 		return;
@@ -626,11 +629,11 @@ async function toggleReactionAcceptance() {
 	const select = await os.select({
 		title: i18n.ts.reactionAcceptance,
 		items: [
-			{ value: null, text: i18n.ts.all },
-			{ value: 'likeOnlyForRemote' as const, text: i18n.ts.likeOnlyForRemote },
-			{ value: 'nonSensitiveOnly' as const, text: i18n.ts.nonSensitiveOnly },
-			{ value: 'nonSensitiveOnlyForLocalLikeOnlyForRemote' as const, text: i18n.ts.nonSensitiveOnlyForLocalLikeOnlyForRemote },
-			{ value: 'likeOnly' as const, text: i18n.ts.likeOnly },
+			{ value: null, label: i18n.ts.all },
+			{ value: 'likeOnlyForRemote' as const, label: i18n.ts.likeOnlyForRemote },
+			{ value: 'nonSensitiveOnly' as const, label: i18n.ts.nonSensitiveOnly },
+			{ value: 'nonSensitiveOnlyForLocalLikeOnlyForRemote' as const, label: i18n.ts.nonSensitiveOnlyForLocalLikeOnlyForRemote },
+			{ value: 'likeOnly' as const, label: i18n.ts.likeOnly },
 		],
 		default: reactionAcceptance.value,
 	});
@@ -653,11 +656,30 @@ async function pickDimension() {
 //#region その他の設定メニューpopup
 function showOtherSettings() {
 	let reactionAcceptanceIcon = 'ti ti-icons';
+	let reactionAcceptanceCaption = '';
 
-	if (reactionAcceptance.value === 'likeOnly') {
-		reactionAcceptanceIcon = 'ti ti-heart _love';
-	} else if (reactionAcceptance.value === 'likeOnlyForRemote') {
-		reactionAcceptanceIcon = 'ti ti-heart-plus';
+	switch (reactionAcceptance.value) {
+		case 'likeOnly':
+			reactionAcceptanceIcon = 'ti ti-heart _love';
+			reactionAcceptanceCaption = i18n.ts.likeOnly;
+			break;
+
+		case 'likeOnlyForRemote':
+			reactionAcceptanceIcon = 'ti ti-heart-plus';
+			reactionAcceptanceCaption = i18n.ts.likeOnlyForRemote;
+			break;
+
+		case 'nonSensitiveOnly':
+			reactionAcceptanceCaption = i18n.ts.nonSensitiveOnly;
+			break;
+
+		case 'nonSensitiveOnlyForLocalLikeOnlyForRemote':
+			reactionAcceptanceCaption = i18n.ts.nonSensitiveOnlyForLocalLikeOnlyForRemote;
+			break;
+
+		default:
+			reactionAcceptanceCaption = i18n.ts.all;
+			break;
 	}
 
 	const postingLangCaption = postingLang.value != null
@@ -682,10 +704,35 @@ function showOtherSettings() {
 	}, { type: 'divider' }, {
 		icon: reactionAcceptanceIcon,
 		text: i18n.ts.reactionAcceptance,
+		caption: reactionAcceptanceCaption,
 		action: () => {
 			toggleReactionAcceptance();
 		},
 	}, { type: 'divider' }, {
+		type: 'button',
+		text: i18n.ts._drafts.saveToDraft,
+		icon: 'ti ti-cloud-upload',
+		action: async () => {
+			if (!canSaveAsServerDraft.value) {
+				return os.alert({
+					type: 'error',
+					text: i18n.ts._drafts.cannotCreateDraft,
+				});
+			}
+			saveServerDraft();
+		},
+	}, ...($i.policies.canScheduleNote && $i.policies.scheduleNoteLimit > 0 ? [{
+		icon: 'ti ti-calendar-time',
+		text: i18n.ts.schedulePost + '...',
+		action: () => {
+			schedule();
+		},
+	}] : []), { type: 'divider' }, {
+		type: 'switch',
+		icon: 'ti ti-eye',
+		text: i18n.ts.preview,
+		ref: showPreview,
+	}, {
 		icon: 'ti ti-trash',
 		text: i18n.ts.reset,
 		danger: true,
@@ -720,33 +767,32 @@ function addVisibleUser() {
 	});
 }
 
-function removeVisibleUser(user) {
-	visibleUsers.value = erase(user, visibleUsers.value);
-}
-
-async function setScheduledTime() {
-	const { canceled, result: date } = await os.inputDateTime({
-		title: i18n.ts.setScheduledTime,
-		default: scheduledTime.value ?? undefined,
-	});
-	if (canceled) return;
-
-	scheduledTime.value = date;
+function removeVisibleUser(id: string) {
+	visibleUsers.value = visibleUsers.value.filter(u => u.id !== id);
 }
 
 function clear() {
+	removeFormState();
+	formStateReady = false;
+	formStateChanged = false;
 	text.value = '';
 	useCw.value = false;
 	cw.value = null;
-	visibility.value = store.s.rememberNoteVisibility ? store.s.visibility : store.s.defaultNoteVisibility;
-	localOnly.value = store.s.rememberNoteVisibility ? store.s.localOnly : store.s.defaultNoteLocalOnly;
+	visibility.value = prefer.s.rememberNoteVisibility ? store.s.visibility : prefer.s.defaultNoteVisibility;
+	localOnly.value = prefer.s.rememberNoteVisibility ? store.s.localOnly : prefer.s.defaultNoteLocalOnly;
 	postingLang.value = null;
 	dimension.value = props.initialDimension ?? store.r.tl.value?.dimensionBySrc?.[store.r.tl.value.src] ?? prefer.s.dimension;
 	files.value = [];
 	poll.value = null;
 	visibleUsers.value = [];
-	scheduledTime.value = null;
+	scheduledAt.value = null;
+	noExtractMentions.value = false;
+	noExtractHashtags.value = false;
+	noExtractEmojis.value = false;
 	quoteId.value = null;
+	serverDraftId.value = null;
+	uploader.reset();
+	nextTick(() => { formStateReady = true; });
 }
 
 function onKeydown(ev: KeyboardEvent) {
@@ -774,60 +820,70 @@ const pastedFileName = 'yyyy-MM-dd HH-mm-ss [{{number}}]';
 
 async function onPaste(ev: ClipboardEvent) {
 	if (props.mock) return;
-	if (!ev.clipboardData) return;
+	if (ev.clipboardData == null) return;
+	if (textareaEl.value == null) return;
 
+	let pastedFiles: File[] = [];
 	for (const { item, i } of Array.from(ev.clipboardData.items, (data, x) => ({ item: data, i: x }))) {
 		if (item.kind === 'file') {
 			const file = item.getAsFile();
 			if (!file) continue;
 			const lio = file.name.lastIndexOf('.');
 			const ext = lio >= 0 ? file.name.slice(lio) : '';
-			const formatted = `${formatTimeString(new Date(file.lastModified), pastedFileName).replace(/{{number}}/g, `${i + 1}`)}${ext}`;
-			upload(file, formatted);
+			const formattedName = `${formatTimeString(new Date(file.lastModified), pastedFileName).replace(/{{number}}/g, `${i + 1}`)}${ext}`;
+			const renamedFile = new File([file], formattedName, { type: file.type });
+			pastedFiles.push(renamedFile);
 		}
+	}
+	if (pastedFiles.length > 0) {
+		ev.preventDefault();
+		uploader.addFiles(pastedFiles);
+		return;
 	}
 
 	const paste = ev.clipboardData.getData('text');
 
-	if (!renote.value && !quoteId.value && paste.startsWith(url + '/notes/')) {
+	if (!renoteTargetNote.value && !quoteId.value && paste.startsWith(url + '/notes/')) {
 		ev.preventDefault();
 
-		os.confirm({
+		const { canceled } = await os.confirm({
 			type: 'info',
 			text: i18n.ts.quoteQuestion,
-		}).then(({ canceled }) => {
-			if (canceled) {
-				insertTextAtCursor(textareaEl.value, paste);
-				return;
-			}
-
-			quoteId.value = RegExp(/^\/notes\/(.+?)\/?$/).exec(paste.substring(url.length))?.[1] ?? null;
 		});
+
+		if (canceled) {
+			insertTextAtCursor(textareaEl.value, paste);
+			return;
+		}
+
+		quoteId.value = paste.substring(url.length).match(/^\/notes\/(.+?)\/?$/)?.[1] ?? null;
 	}
 
 	if (paste.length > 1000) {
 		ev.preventDefault();
-		os.confirm({
+
+		const { canceled } = await os.confirm({
 			type: 'info',
 			text: i18n.ts.attachAsFileQuestion,
-		}).then(({ canceled }) => {
-			if (canceled) {
-				insertTextAtCursor(textareaEl.value, paste);
-				return;
-			}
-
-			const fileName = formatTimeString(new Date(), pastedFileName).replace(/{{number}}/g, '0');
-			const file = new File([paste], `${fileName}.txt`, { type: 'text/plain' });
-			upload(file, `${fileName}.txt`);
 		});
+
+		if (canceled) {
+			insertTextAtCursor(textareaEl.value, paste);
+			return;
+		}
+
+		const fileName = formatTimeString(new Date(), pastedFileName).replace(/{{number}}/g, '0');
+		const file = new File([paste], `${fileName}.txt`, { type: 'text/plain' });
+		uploader.addFiles([file]);
 	}
 }
 
-function onDragover(ev) {
-	if (!ev.dataTransfer.items[0]) return;
+function onDragover(ev: DragEvent) {
+	if (ev.dataTransfer == null) return;
+	if (ev.dataTransfer.items[0] == null) return;
+
 	const isFile = ev.dataTransfer.items[0].kind === 'file';
-	const isDriveFile = ev.dataTransfer.types[0] === _DATA_TRANSFER_DRIVE_FILE_;
-	if (isFile || isDriveFile) {
+	if (isFile || checkDragDataType(ev, ['driveFiles'])) {
 		ev.preventDefault();
 		draghover.value = true;
 		switch (ev.dataTransfer.effectAllowed) {
@@ -863,83 +919,66 @@ function onDrop(ev: DragEvent): void {
 	// ファイルだったら
 	if (ev.dataTransfer && ev.dataTransfer.files.length > 0) {
 		ev.preventDefault();
-		for (const x of Array.from(ev.dataTransfer.files)) upload(x);
+		uploader.addFiles(Array.from(ev.dataTransfer.files));
 		return;
 	}
 
 	//#region ドライブのファイル
-	const driveFile = ev.dataTransfer?.getData(_DATA_TRANSFER_DRIVE_FILE_);
-	if (driveFile != null && driveFile !== '') {
-		const file = JSON.parse(driveFile);
-		if (file?.id) files.value.push(file);
-		ev.preventDefault();
+	{
+		const droppedData = getDragData(ev, 'driveFiles');
+		if (droppedData != null) {
+			files.value.push(...droppedData);
+			ev.preventDefault();
+		}
 	}
 	//#endregion
 }
 
-function saveDraft() {
-	if (props.instant || props.mock) return;
+async function saveServerDraft(options: {
+	isActuallyScheduled?: boolean;
+} = {}) {
+	if (draftProcessing.value) return;
+	draftProcessing.value = true;
+	try {
+		if (uploader.items.value.some(x => x.uploaded == null)) {
+			await uploadFiles();
+		}
 
-	let scheduledAt = scheduledTime.value ?? null;
-	if (scheduledAt && (isNaN(scheduledAt.getTime()) || scheduledAt.getTime() < Date.now())) {
-		scheduledAt = null;
-	}
-
-	const draftData = JSON.parse(miLocalStorage.getItem('drafts') ?? '{}') as Record<string, Misskey.entities.NoteDraft>;
-
-	draftData[draftKey.value] = {
-		updatedAt: new Date().toISOString(),
-		scheduledAt: scheduledAt?.toISOString() ?? null,
-		channel: channel.value ? {
-			id: channel.value.id,
-			name: channel.value.name,
-		} : undefined,
-		renote: renote.value ? {
-			id: renote.value.id,
-			text: (renote.value.cw ?? renote.value.text)?.substring(0, 100),
-			user: {
-				id: renote.value.userId,
-				username: renote.value.user.username,
-				host: renote.value.user.host,
-			},
-		} : undefined,
-		reply: reply.value ? {
-			id: reply.value.id,
-			text: (reply.value.cw ?? reply.value.text)?.substring(0, 100),
-			user: {
-				id: reply.value.userId,
-				username: reply.value.user.username,
-				host: reply.value.user.host,
-			},
-		} : undefined,
-		data: {
+		const data = {
 			text: text.value,
-			useCw: useCw.value,
-			cw: cw.value,
+			cw: useCw.value ? cw.value : null,
 			visibility: visibility.value,
 			localOnly: localOnly.value,
-			lang: postingLang.value,
-			dimension: dimension.value,
-			// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-			files: files.value.filter(f => f?.id && f.type && f.name),
+			hashtag: withHashtags.value && hashtags.value.trim() !== '' ? hashtags.value : null,
+			fileIds: files.value.map(f => f.id),
 			poll: poll.value,
-			visibleUserIds: visibility.value === 'specified' ? visibleUsers.value.map(x => x.id) : undefined,
-			quoteId: quoteId.value,
+			visibleUserIds: visibility.value === 'specified' ? visibleUsers.value.map(x => x.id) : [],
+			renoteId: renoteTargetNote.value?.id ?? quoteId.value ?? null,
+			replyId: replyTargetNote.value?.id ?? null,
+			channelId: targetChannel.value?.id ?? null,
 			reactionAcceptance: reactionAcceptance.value,
-		},
-	};
+			dimension: dimension.value,
+			lang: postingLang.value,
+			scheduledAt: scheduledAt.value,
+			isActuallyScheduled: options.isActuallyScheduled ?? false,
+			noExtractMentions: noExtractMentions.value,
+			noExtractHashtags: noExtractHashtags.value,
+			noExtractEmojis: noExtractEmojis.value,
+		};
 
-	miLocalStorage.setItem('drafts', JSON.stringify(draftData));
-}
-
-function deleteDraft() {
-	const draftData = JSON.parse(miLocalStorage.getItem('drafts') ?? '{}') as Record<string, Misskey.entities.NoteDraft>;
-
-	delete draftData[draftKey.value];
-
-	draftId.value = Date.now().toString();
-
-	miLocalStorage.setItem('drafts', JSON.stringify(draftData));
+		if (serverDraftId.value == null) {
+			const result = await os.apiWithDialog('notes/drafts/create', data);
+			serverDraftId.value = result.createdDraft.id;
+		} else {
+			const result = await os.apiWithDialog('notes/drafts/update', {
+				...data,
+				draftId: serverDraftId.value,
+			});
+			serverDraftId.value = result.updatedDraft.id;
+		}
+	} finally {
+		draftProcessing.value = false;
+	}
 }
 
 function isAnnoying(text: string): boolean {
@@ -950,74 +989,17 @@ function isAnnoying(text: string): boolean {
 		text.includes('$[position');
 }
 
-async function openDrafts() {
-	const { canceled, selected } = await new Promise<{ canceled: boolean, selected: string | undefined }>(async (resolve) => {
-		await os.popup(MkDraftsDialog, {}, {
-			done: result => {
-				resolve(typeof result.selected === 'string' ? result : { canceled: true, selected: undefined });
-			},
-		}, 'closed');
-	});
+async function uploadFiles() {
+	await uploader.upload();
 
-	if (canceled) return;
-
-	if (selected) {
-		const channelId = selected.startsWith('channel:') ? selected.match(/channel:(.+?)(renote|reply|note):/)?.[1] : undefined;
-		const renoteId = selected.includes('renote:') ? selected.match(/renote:(.+)/)?.[1] : undefined;
-		const replyId = selected.includes('reply:') ? selected.match(/reply:(.+)/)?.[1] : undefined;
-
-		channel.value = channelId ? await misskeyApi('channels/show', { channelId }) : null;
-		renote.value = renoteId ? await misskeyApi('notes/show', { noteId: renoteId }) : null;
-		reply.value = replyId ? await misskeyApi('notes/show', { noteId: replyId }) : null;
-
-		if (!renote.value && !reply.value) {
-			draftId.value = selected.match(/note:(.+)/)?.[1] ?? Date.now().toString();
-		} else {
-			draftId.value = Date.now().toString();
-		}
-
-		loadDraft(true);
+	for (const uploadedItem of uploader.items.value.filter(x => x.uploaded != null)) {
+		files.value.push(uploadedItem.uploaded!);
+		uploader.removeItem(uploadedItem);
 	}
 }
 
-function loadDraft(exactMatch = false) {
-	const drafts = JSON.parse(miLocalStorage.getItem('drafts') ?? '{}') as Record<string, Misskey.entities.NoteDraft>;
-	const scope = exactMatch ? draftKey.value : draftKey.value.replace(`note:${draftId.value}`, 'note:');
-	const draft = Object.entries(drafts).filter(([k]) => k.startsWith(scope))
-		.map(r => ({ key: r[0], value: { ...r[1], updatedAt: new Date(r[1].updatedAt).getTime() } }))
-		.sort((a, b) => b.value.updatedAt - a.value.updatedAt).at(0);
-
-	if (draft) {
-		if (scope !== draft.key) {
-			draftId.value = draft.key.replace(scope, '');
-		}
-
-		scheduledTime.value = draft.value.scheduledAt ? new Date(draft.value.scheduledAt) : null;
-		if (scheduledTime.value && (isNaN(scheduledTime.value.getTime()) || scheduledTime.value.getTime() < Date.now())) {
-			scheduledTime.value = null;
-		}
-		text.value = draft.value.data.text ?? '';
-		useCw.value = draft.value.data.useCw;
-		cw.value = draft.value.data.cw;
-		visibility.value = draft.value.data.visibility;
-		localOnly.value = draft.value.data.localOnly;
-		postingLang.value = draft.value.data.lang;
-		dimension.value = draft.value.data.dimension ?? prefer.s.dimension;
-		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-		files.value = draft.value.data.files?.filter(f => f?.id && f.type && f.name) || [];
-		if (draft.value.data.poll) {
-			poll.value = draft.value.data.poll;
-		}
-		if (draft.value.data.visibleUserIds) {
-			misskeyApi('users/show', { userIds: draft.value.data.visibleUserIds }).then(users => {
-				users.forEach(u => pushVisibleUser(u));
-			});
-		}
-	}
-}
-
-async function post(ev?: MouseEvent) {
-	if (ev) {
+async function post(ev?: PointerEvent) {
+	if (ev != null) {
 		const el = (ev.currentTarget ?? ev.target) as HTMLElement | null;
 
 		if (el && prefer.s.animation) {
@@ -1026,6 +1008,21 @@ async function post(ev?: MouseEvent) {
 			const y = rect.top + (el.offsetHeight / 2);
 			os.popup(MkRippleEffect, { x, y }, {}, 'end');
 		}
+	}
+
+	if (scheduledAt.value != null) {
+		if (uploader.items.value.some(x => x.uploaded == null)) {
+			await uploadFiles();
+
+			// アップロード失敗したものがあったら中止
+			if (uploader.items.value.some(x => x.uploaded == null)) {
+				return;
+			}
+		}
+
+		await postAsScheduled();
+		clear();
+		return;
 	}
 
 	if (props.mock) return;
@@ -1057,22 +1054,33 @@ async function post(ev?: MouseEvent) {
 		}
 	}
 
+	if (uploader.items.value.some(x => x.uploaded == null)) {
+		await uploadFiles();
+
+		// アップロード失敗したものがあったら中止
+		if (uploader.items.value.some(x => x.uploaded == null)) {
+			return;
+		}
+	}
+
 	let postData = {
 		text: text.value === '' ? null : text.value,
 		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
 		fileIds: files.value.length > 0 ? files.value.filter(f => f?.id).map(f => f.id) : undefined,
-		replyId: reply.value ? reply.value.id : undefined,
-		renoteId: renote.value ? renote.value.id : quoteId.value ? quoteId.value : undefined,
-		channelId: channel.value ? channel.value.id : undefined,
+		replyId: replyTargetNote.value ? replyTargetNote.value.id : undefined,
+		renoteId: renoteTargetNote.value ? renoteTargetNote.value.id : quoteId.value ? quoteId.value : undefined,
+		channelId: targetChannel.value ? targetChannel.value.id : undefined,
 		poll: poll.value,
 		cw: useCw.value ? cw.value ?? '' : null,
-		localOnly: localOnly.value,
+		localOnly: visibility.value === 'specified' ? false : localOnly.value,
 		dimension: dimension.value,
 		visibility: visibility.value,
 		visibleUserIds: visibility.value === 'specified' ? visibleUsers.value.map(u => u.id) : undefined,
 		reactionAcceptance: reactionAcceptance.value,
-		scheduledAt: scheduledTime.value?.getTime() ?? undefined,
 		lang: postingLang.value ?? undefined,
+		noExtractMentions: noExtractMentions.value,
+		noExtractHashtags: noExtractHashtags.value,
+		noExtractEmojis: noExtractEmojis.value,
 		noCreatedNote: true,
 	};
 
@@ -1107,18 +1115,31 @@ async function post(ev?: MouseEvent) {
 
 	if (postAccount.value) {
 		const storedAccounts = await getAccounts();
-		token = storedAccounts.find(x => x.id === postAccount.value?.id)?.token;
+		const storedAccount = storedAccounts.find(x => x.id === postAccount.value?.id);
+		if (storedAccount && storedAccount.token != null) {
+			token = storedAccount.token;
+		} else {
+			await os.alert({
+				type: 'error',
+				text: 'cannot find the token of the selected account.',
+			});
+			return;
+		}
 	}
 
+	const draftToDelete = serverDraftId.value;
+	saveFormState();
+	const submittedFormState = lastSavedFormState;
 	posting.value = true;
 	misskeyApi('notes/create', postData, token).then(() => {
+		removeFormState(submittedFormState);
 		if (props.freezeAfterPosted) {
 			posted.value = true;
 		} else {
 			clear();
 		}
-		nextTick(() => {
-			deleteDraft();
+
+		nextTick(async () => {
 			emit('posted');
 			if (postData.text && postData.text !== '') {
 				const hashtags_ = mfm.parse(postData.text).map(x => x.type === 'hashtag' && x.props.hashtag).filter(x => x) as string[];
@@ -1155,7 +1176,7 @@ async function post(ev?: MouseEvent) {
 				claimAchievement('brainDiver');
 			}
 
-			if (renote.value && (renote.value.userId === $i.id) && text.length > 0) {
+			if (renoteTargetNote.value && (renoteTargetNote.value.userId === $i.id) && text.length > 0) {
 				claimAchievement('selfQuote');
 			}
 
@@ -1169,6 +1190,15 @@ async function post(ev?: MouseEvent) {
 			if (m === 0 && s === 0) {
 				claimAchievement('postedAt0min0sec');
 			}
+
+			if (draftToDelete != null) {
+				try {
+					await misskeyApi('notes/drafts/delete', { draftId: draftToDelete });
+				} catch (err) {
+					console.error(err);
+				}
+			}
+			serverDraftId.value = null;
 		});
 	}).catch(err => {
 		posting.value = false;
@@ -1181,25 +1211,21 @@ async function post(ev?: MouseEvent) {
 	emit('posting');
 }
 
+async function postAsScheduled() {
+	if (props.mock) return;
+
+	await saveServerDraft({
+		isActuallyScheduled: true,
+	});
+}
+
 function cancel() {
-	if (!posting.value && !posted.value &&
-		(1 <= textLength.value || 1 <= files.value.length || !!poll.value || !!props.renote)) {
-		os.confirm({
-			type: 'question',
-			text: i18n.ts.saveDraftNote,
-			okText: i18n.ts.yes,
-			cancelText: i18n.ts.no,
-		}).then(( { canceled } ) => {
-			if (!canceled) return;
-			deleteDraft();
-		});
-	}
 	emit('cancel');
 }
 
 function insertMention() {
 	os.selectUser({ localOnly: localOnly.value, includeSelf: true }).then(user => {
-		insertTextAtCursor(textareaEl.value, '@' + Misskey.acct.toString(user) + ' ');
+		if (textareaEl.value) insertTextAtCursor(textareaEl.value, '@' + Misskey.acct.toString(user) + ' ');
 	});
 }
 
@@ -1242,14 +1268,33 @@ async function insertEmoji(ev: MouseEvent) {
 
 async function insertMfmFunction(ev: MouseEvent) {
 	if (textareaEl.value == null) return;
+	let pos = textareaEl.value.selectionStart ?? 0;
+	let posEnd = textareaEl.value.selectionEnd ?? text.value.length;
 	mfmFunctionPicker(
 		ev.currentTarget ?? ev.target,
-		textareaEl.value,
-		text,
+		(tag) => {
+			if (pos === posEnd) {
+				text.value = `${text.value.substring(0, pos)}$[${tag} ]${text.value.substring(pos)}`;
+				pos += tag.length + 3;
+				posEnd = pos;
+			} else {
+				text.value = `${text.value.substring(0, pos)}$[${tag} ${text.value.substring(pos, posEnd)}]${text.value.substring(posEnd)}`;
+				pos += tag.length + 3;
+				posEnd = pos;
+			}
+		},
+		() => {
+			nextTick(() => {
+				if (textareaEl.value) {
+					textareaEl.value.focus();
+					textareaEl.value.setSelectionRange(pos, posEnd);
+				}
+			});
+		},
 	);
 }
 
-function showActions(ev: MouseEvent) {
+function showActions(ev: PointerEvent) {
 	os.popupMenu(postFormActions.map(action => ({
 		text: action.title,
 		action: () => {
@@ -1267,10 +1312,81 @@ function showActions(ev: MouseEvent) {
 
 const postAccount = ref<Misskey.entities.UserDetailed | null>(null);
 
-function openAccountMenu(ev: MouseEvent) {
+// 明示保存の下書きとは別に、この端末の書きかけを保持する。
+const formState = reactive({
+	text, useCw, cw, visibility, localOnly, files, poll, visibleUsers,
+	quoteId, renoteTargetNote, replyTargetNote, targetChannel, reactionAcceptance,
+	dimension, postingLang, scheduledAt, noExtractMentions, noExtractHashtags, noExtractEmojis,
+	withHashtags, hashtags, serverDraftId,
+	postAccountId: computed(() => postAccount.value?.id ?? null),
+});
+const formStateKey = `postFormState:${JSON.stringify([
+	$i.id, props.channel?.id ?? null, props.reply?.id ?? null, props.renote?.id ?? null,
+])}` as const;
+const retainFormState = !props.instant && !props.mock && !props.mention && !props.specified && !props.initialNote
+	&& props.initialText == null && props.initialCw == null && props.initialFiles == null
+	&& props.initialVisibility == null && props.initialLocalOnly == null && props.initialVisibleUsers.length === 0;
+let formStateReady = false;
+let formStateChanged = false;
+let lastSavedFormState: string | null = null;
+
+function saveFormState() {
+	if (!retainFormState || !formStateReady || !formStateChanged || posted.value || draftProcessing.value) return;
+	try {
+		const value = JSON.stringify(formState);
+		if (value === lastSavedFormState) return;
+		miLocalStorage.setItem(formStateKey, value);
+		lastSavedFormState = value;
+	} catch {
+		console.warn('投稿フォームの書きかけを保持できませんでした。');
+	}
+}
+
+function removeFormState(expected = lastSavedFormState) {
+	if (!retainFormState || expected == null) return;
+	try {
+		// 送信待ちの間に別のフォームで書いた内容は消さない。
+		if (miLocalStorage.getItem(formStateKey) === expected) miLocalStorage.removeItem(formStateKey);
+		if (expected === lastSavedFormState) lastSavedFormState = null;
+	} catch {
+		console.warn('投稿フォームの保持内容を消去できませんでした。');
+	}
+}
+
+async function restoreFormState() {
+	if (!retainFormState) return;
+	try {
+		const saved = miLocalStorage.getItem(formStateKey);
+		if (saved == null) return;
+		const { postAccountId, ...state } = JSON.parse(saved) as typeof formState;
+		if (typeof state.text !== 'string' || !Array.isArray(state.files) || !Array.isArray(state.visibleUsers)
+			|| !Misskey.noteVisibilities.includes(state.visibility) || typeof state.localOnly !== 'boolean'
+			|| typeof state.dimension !== 'number') return;
+		let account: Misskey.entities.UserDetailed | null = null;
+		if (postAccountId != null) {
+			const stored = (await getAccounts()).find(x => x.host === host && x.id === postAccountId && x.token != null);
+			if (!stored?.user) return;
+			account = stored.user;
+		}
+		Object.assign(formState, state);
+		postAccount.value = account;
+		lastSavedFormState = saved;
+	} catch {
+		console.warn('投稿フォームの書きかけを復元できませんでした。');
+	}
+}
+
+watch(formState, () => {
+	if (!formStateReady) return;
+	formStateChanged = true;
+	saveFormState();
+}, { deep: true });
+watch(draftProcessing, (processing) => { if (!processing) saveFormState(); });
+
+async function openAccountMenu(ev: PointerEvent) {
 	if (props.mock) return;
 
-	openAccountMenu_({
+	const items = await getAccountMenu({
 		withExtraOperation: false,
 		includeCurrentAccount: true,
 		active: postAccount.value != null ? postAccount.value.id : $i.id,
@@ -1278,10 +1394,183 @@ function openAccountMenu(ev: MouseEvent) {
 			if (account.id === $i.id) {
 				postAccount.value = null;
 			} else {
+				serverDraftId.value = null;
 				postAccount.value = account;
 			}
 		},
-	}, ev);
+	});
+
+	os.popupMenu(items, (ev.currentTarget ?? ev.target ?? undefined) as HTMLElement | undefined);
+}
+
+function showPerUploadItemMenu(item: UploaderItem, ev: MouseEvent) {
+	const menu = uploader.getMenu(item);
+	os.popupMenu(menu, ev.currentTarget ?? ev.target);
+}
+
+function showPerUploadItemMenuViaContextmenu(item: UploaderItem, ev: PointerEvent) {
+	const menu = uploader.getMenu(item);
+	os.contextMenu(menu, ev);
+}
+
+async function restoreServerDraft(draft: Misskey.entities.NoteDraft) {
+	if (draftProcessing.value) return;
+	draftProcessing.value = true;
+	try {
+		const users = draft.visibleUserIds?.length
+			? await os.apiWithDialog('users/show', { userIds: draft.visibleUserIds })
+			: [];
+
+		uploader.abortAll();
+		for (const item of [...uploader.items.value]) {
+			uploader.removeItem(item);
+		}
+
+		serverDraftId.value = null;
+		text.value = '';
+		useCw.value = false;
+		cw.value = null;
+		visibility.value = prefer.s.defaultNoteVisibility;
+		localOnly.value = prefer.s.defaultNoteLocalOnly;
+		postingLang.value = null;
+		dimension.value = props.initialDimension ?? prefer.s.dimension;
+		files.value = [];
+		poll.value = null;
+		visibleUsers.value = [];
+		hashtags.value = '';
+		withHashtags.value = false;
+		scheduledAt.value = null;
+		noExtractMentions.value = false;
+		noExtractHashtags.value = false;
+		noExtractEmojis.value = false;
+		quoteId.value = null;
+		renoteTargetNote.value = null;
+		replyTargetNote.value = null;
+		targetChannel.value = null;
+		reactionAcceptance.value = store.s.reactionAcceptance;
+
+		text.value = draft.text ?? '';
+		useCw.value = draft.cw != null;
+		cw.value = draft.cw ?? null;
+		visibility.value = draft.visibility;
+		localOnly.value = draft.localOnly ?? false;
+		files.value = draft.files ?? [];
+		if (draft.hashtag) {
+			hashtags.value = draft.hashtag;
+			withHashtags.value = true;
+		}
+		if (draft.poll) {
+			await nextTick();
+			poll.value = {
+				choices: draft.poll.choices,
+				multiple: draft.poll.multiple,
+				expiresAt: draft.poll.expiredAfter == null && draft.poll.expiresAt ? new Date(draft.poll.expiresAt).getTime() : null,
+				expiredAfter: draft.poll.expiredAfter ?? null,
+			};
+		}
+		users.forEach(user => pushVisibleUser(user));
+		quoteId.value = draft.renoteId ?? null;
+		renoteTargetNote.value = draft.renote;
+		replyTargetNote.value = draft.reply;
+		reactionAcceptance.value = draft.reactionAcceptance;
+		targetChannel.value = (draft.channel as Misskey.entities.Channel | null | undefined) ?? null;
+		dimension.value = draft.dimension ?? prefer.s.dimension;
+		postingLang.value = draft.lang as PostingLanguage | null;
+		scheduledAt.value = draft.scheduledAt != null && draft.scheduledAt >= Date.now() ? draft.scheduledAt : null;
+		noExtractMentions.value = draft.noExtractMentions;
+		noExtractHashtags.value = draft.noExtractHashtags;
+		noExtractEmojis.value = draft.noExtractEmojis;
+		serverDraftId.value = draft.id;
+	} finally {
+		draftProcessing.value = false;
+	}
+}
+
+function showDraftMenu(ev: MouseEvent) {
+	function showDraftsDialog(scheduled: boolean) {
+		const { dispose } = os.popup(defineAsyncComponent(() => import('@/components/MkNoteDraftsDialog.vue')), {
+			scheduled,
+		}, {
+			restore: async (draft: Misskey.entities.NoteDraft) => {
+				await restoreServerDraft(draft);
+			},
+			cancel: () => {
+
+			},
+			closed: () => {
+				dispose();
+			},
+		});
+	}
+
+	os.popupMenu([{
+		type: 'button',
+		text: i18n.ts._drafts.listDrafts,
+		icon: 'ti ti-cloud-download',
+		action: () => {
+			showDraftsDialog(false);
+		},
+	}, {
+		type: 'button',
+		text: i18n.ts._drafts.listScheduledNotes,
+		icon: 'ti ti-clock-down',
+		action: () => {
+			showDraftsDialog(true);
+		},
+	}], (ev.currentTarget ?? ev.target ?? undefined) as HTMLElement | undefined);
+}
+
+async function schedule() {
+	const { canceled, result } = await os.inputDatetime({
+		title: i18n.ts.schedulePost,
+	});
+	if (canceled) return;
+	if (result.getTime() <= Date.now()) return;
+
+	scheduledAt.value = result.getTime();
+}
+
+function cancelSchedule() {
+	scheduledAt.value = null;
+}
+
+function showTour() {
+	if (textareaEl.value == null ||
+		footerEl.value == null ||
+		accountMenuEl.value == null ||
+		visibilityButton.value == null ||
+		otherSettingsButton.value == null ||
+		submitButtonEl.value == null) {
+		return;
+	}
+
+	startTour([{
+		element: textareaEl.value,
+		title: i18n.ts._postForm._howToUse.content_title,
+		description: i18n.ts._postForm._howToUse.content_description,
+	}, {
+		element: footerEl.value,
+		title: i18n.ts._postForm._howToUse.toolbar_title,
+		description: i18n.ts._postForm._howToUse.toolbar_description,
+	}, {
+		element: accountMenuEl.value,
+		title: i18n.ts._postForm._howToUse.account_title,
+		description: i18n.ts._postForm._howToUse.account_description,
+	}, {
+		element: visibilityButton.value,
+		title: i18n.ts._postForm._howToUse.visibility_title,
+		description: i18n.ts._postForm._howToUse.visibility_description,
+	}, {
+		element: otherSettingsButton.value,
+		title: i18n.ts._postForm._howToUse.menu_title,
+		description: i18n.ts._postForm._howToUse.menu_description,
+	}, {
+		element: submitButtonEl.value,
+		title: i18n.ts._postForm._howToUse.submit_title,
+		description: i18n.ts._postForm._howToUse.submit_description,
+	}]).then(() => {
+		closeTip('postForm');
+	});
 }
 
 onMounted(() => {
@@ -1293,16 +1582,12 @@ onMounted(() => {
 		});
 	}
 
-	autocompleteTextareaInput.value = new Autocomplete(textareaEl.value, text);
-	autocompleteCwInput.value = new Autocomplete(cwInputEl.value, cw);
-	autocompleteHashtagsInput.value = new Autocomplete(hashtagsInputEl.value, hashtags);
+	if (textareaEl.value) autocompleteTextareaInput.value = new Autocomplete(textareaEl.value, text);
+	if (cwInputEl.value) autocompleteCwInput.value = new Autocomplete(cwInputEl.value, cw);
+	if (hashtagsInputEl.value) autocompleteHashtagsInput.value = new Autocomplete(hashtagsInputEl.value, hashtags);
 
-	nextTick(() => {
-		// 書きかけの投稿を復元
-		if (!props.instant && !props.mention && !props.specified && !props.mock && prefer.s.autoloadDrafts) {
-			loadDraft();
-		}
-
+	nextTick(async () => {
+		await restoreFormState();
 		// 削除して編集
 		if (props.initialNote) {
 			const init = props.initialNote;
@@ -1311,12 +1596,10 @@ onMounted(() => {
 			files.value = init.files?.filter(f => f?.id && f.type && f.name) ?? [];
 			cw.value = init.cw ?? null;
 			useCw.value = init.cw != null;
-			cw.value = init.cw ?? null;
 			visibility.value = init.visibility;
 			localOnly.value = init.localOnly ?? false;
 			postingLang.value = init.lang ?? null;
 			dimension.value = init.dimension ?? props.initialDimension ?? store.r.tl.value?.dimensionBySrc?.[store.r.tl.value.src] ?? prefer.s.dimension;
-			files.value = init.files ?? [];
 			if (init.poll) {
 				poll.value = {
 					choices: init.poll.choices.map(x => x.text),
@@ -1331,11 +1614,11 @@ onMounted(() => {
 				});
 			}
 			quoteId.value = init.renote ? init.renote.id : null;
-			scheduledTime.value = null;
+			scheduledAt.value = null;
 			reactionAcceptance.value = init.reactionAcceptance;
 		}
-
-		nextTick(() => watchForDraft());
+		await nextTick();
+		formStateReady = true;
 	});
 });
 
@@ -1348,8 +1631,35 @@ onUnmounted(() => {
 	autocompleteHashtagsInput.value = null;
 });
 
+async function canClose() {
+	if (draftProcessing.value) return false;
+	if (!uploader.allItemsUploaded.value) {
+		const { canceled } = await os.confirm({
+			type: 'question',
+			text: i18n.ts._postForm.quitInspiteOfThereAreUnuploadedFilesConfirm,
+			okText: i18n.ts.yes,
+			cancelText: i18n.ts.no,
+		});
+		if (canceled) return false;
+	}
+
+	saveFormState();
+	if (retainFormState && lastSavedFormState != null && !posted.value && (text.value || files.value.length > 0 || poll.value || quoteId.value)) {
+		const { canceled } = await os.confirm({
+			type: 'question',
+			text: i18n.ts.saveDraftNote,
+			okText: i18n.ts.yes,
+			cancelText: i18n.ts.no,
+		});
+		if (canceled) removeFormState();
+	}
+	return true;
+}
+
 defineExpose({
 	clear,
+	abortUploader: () => uploader.abortAll(),
+	canClose,
 });
 </script>
 
@@ -1357,13 +1667,6 @@ defineExpose({
 .root {
 	position: relative;
 	container-type: inline-size;
-
-	&.modal {
-		width: 100%;
-		max-width: 520px;
-		overflow-x: clip;
-		overflow-y: auto;
-	}
 }
 
 //#region header
@@ -1377,27 +1680,23 @@ defineExpose({
 
 .headerLeft {
 	display: flex;
-	flex: 0 1 100px;
+	flex: 1;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 6px;
+	padding-left: 12px;
 }
 
 .cancel {
-	padding: 0;
-	font-size: 1em;
-	height: 100%;
-	flex: 0 1 50px;
-}
-
-.account {
-	height: 100%;
-	display: inline-flex;
-	vertical-align: bottom;
-	flex: 0 1 50px;
+	padding: 8px;
 }
 
 .avatar {
+	display: block;
 	width: 28px;
 	height: 28px;
 	margin: auto;
+	object-fit: cover;
 }
 
 .headerRight {
@@ -1556,6 +1855,14 @@ html[data-color-scheme=light] .preview {
 	margin: 0 20px 16px 20px;
 }
 
+.scheduledAt {
+	margin: 0 20px 16px 20px;
+}
+
+.showHowToUse {
+	margin: 0 20px 16px 20px;
+}
+
 .cw,
 .hashtags,
 .text {
@@ -1629,7 +1936,8 @@ html[data-color-scheme=light] .preview {
 	min-width: 100%;
 	width: 100%;
 	min-height: 90px;
-	height: 100%;
+	max-height: 500px;
+	field-sizing: content;
 }
 
 .textCount {
@@ -1646,15 +1954,6 @@ html[data-color-scheme=light] .preview {
 	&.textOver {
 		color: #ff2a2a;
 	}
-}
-
-.scheduledTime {
-	display: flex;
-	padding: 8px 12px;
-	gap: 4px;
-	align-items: center;
-	font-size: 90%;
-	background: var(--MI_THEME-infoBg);
 }
 
 .footer {

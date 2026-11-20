@@ -48,6 +48,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 				</div>
 				<div v-else-if="cellType === 'image'">
 					<img
+						v-if="cell.value && typeof cell.value === 'string'"
 						:src="cell.value"
 						:alt="cell.value"
 						:class="$style.viewImage"
@@ -95,7 +96,7 @@ import type { Size } from '@/components/grid/grid.js';
 import type { CellValue, GridCell } from '@/components/grid/cell.js';
 import type { GridRowSetting } from '@/components/grid/row.js';
 import { GridEventEmitter } from '@/components/grid/grid.js';
-import { useTooltip } from '@/use/use-tooltip.js';
+import { useTooltip } from '@/composables/use-tooltip.js';
 import * as os from '@/os.js';
 import { equalCellAddress, getCellAddress } from '@/components/grid/grid-utils.js';
 
@@ -187,7 +188,7 @@ function onCellKeyDown(ev: KeyboardEvent) {
 	}
 }
 
-function onInputText(ev: Event) {
+function onInputText(ev: InputEvent) {
 	editingValue.value = (ev.target as HTMLInputElement).value;
 }
 
@@ -297,11 +298,15 @@ useTooltip(rootEl, (showing) => {
 	}
 
 	const content = cell.value.violation.violations.filter(it => !it.valid).map(it => it.result.message).join('\n');
-	os.popup(defineAsyncComponent(() => import('@/components/grid/MkCellTooltip.vue')), {
+	const result = os.popup(defineAsyncComponent(() => import('@/components/grid/MkCellTooltip.vue')), {
 		showing,
 		content,
-		targetElement: rootEl.value!,
-	}, {}, 'closed');
+		anchorElement: rootEl.value!,
+	}, {
+		closed: () => {
+			result.dispose();
+		},
+	});
 });
 
 onMounted(() => {

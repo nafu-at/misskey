@@ -54,89 +54,7 @@ https://github.com/sindresorhus/file-type/blob/main/core.js
 https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Containers
 */
 
-export const notificationTypes = [
-	'note',
-	'follow',
-	'mention',
-	'reply',
-	'renote',
-	'quote',
-	'reaction',
-	'pollEnded',
-	'receiveFollowRequest',
-	'followRequestAccepted',
-	'roleAssigned',
-	'chatRoomInvitationReceived',
-	'achievementEarned',
-	'noteScheduled',
-	'scheduledNotePosted',
-	'scheduledNoteError',
-	'sensitiveFlagAssigned',
-	'exportCompleted',
-	'login',
-	'createToken',
-	'test',
-	'app',
-] as const;
-export const obsoleteNotificationTypes = ['pollVote', 'groupInvited'] as const;
-
-export const ROLE_POLICIES = [
-	'required2fa',
-	'gtlAvailable',
-	'ltlAvailable',
-	'canPublicNote',
-	'canScheduleNote',
-	'scheduleNoteLimit',
-	'scheduleNoteMaxDays',
-	'canInitiateConversation',
-	'canCreateContent',
-	'canUpdateContent',
-	'canDeleteContent',
-	'canPurgeAccount',
-	'canUpdateAvatar',
-	'canUpdateBanner',
-	'mentionLimit',
-	'canInvite',
-	'inviteLimit',
-	'inviteLimitCycle',
-	'inviteExpirationTime',
-	'canManageCustomEmojis',
-	'canManageAvatarDecorations',
-	'canSearchNotes',
-	'canUseTranslator',
-	'canUseDriveFileInSoundSettings',
-	'canUseReaction',
-	'canHideAds',
-	'driveCapacityMb',
-	'maxFileSizeMb',
-	'alwaysMarkNsfw',
-	'canUpdateBioMedia',
-	'skipNsfwDetection',
-	'pinLimit',
-	'antennaLimit',
-	'antennaNotesLimit',
-	'wordMuteLimit',
-	'webhookLimit',
-	'accessTokenLimit',
-	'clipLimit',
-	'noteEachClipsLimit',
-	'userListLimit',
-	'userEachUserListsLimit',
-	'rateLimitFactor',
-	'avatarDecorationLimit',
-	'canImportAntennas',
-	'canImportBlocking',
-	'canImportFollowing',
-	'canImportMuting',
-	'canImportUserLists',
-	'mutualLinkSectionLimit',
-	'mutualLinkLimit',
-	'allowReport',
-	'chatAvailability',
-] as const;
-
 export const DEFAULT_SERVER_ERROR_IMAGE_URL = 'https://xn--931a.moe/assets/error.jpg';
-export const DEFAULT_NOT_FOUND_IMAGE_URL = 'https://xn--931a.moe/assets/not-found.jpg';
 export const DEFAULT_INFO_IMAGE_URL = 'https://xn--931a.moe/assets/info.jpg';
 
 export const MFM_TAGS = ['tada', 'jelly', 'twitch', 'shake', 'spin', 'jump', 'bounce', 'flip', 'x2', 'x3', 'x4', 'scale', 'position', 'fg', 'bg', 'border', 'font', 'blur', 'rainbow', 'sparkle', 'rotate', 'ruby', 'unixtime'];
@@ -164,3 +82,9 @@ export const MFM_PARAMS: Record<typeof MFM_TAGS[number], string[]> = {
 	ruby: [],
 	unixtime: [],
 };
+
+/**
+ * デフォルトの絵文字。UIの演出などでも使用されるため空にしてはいけない
+ * （絵文字パレットのデフォルト絵文字を空にする等の場合は、preferenceのdefinition側の値を空にすること）
+ */
+export const DEFAULT_EMOJIS = ['👍', '❤️', '😆', '🤔', '😮', '🎉', '💢', '😥', '😇', '🍮'];

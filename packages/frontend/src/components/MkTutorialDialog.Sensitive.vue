@@ -70,6 +70,7 @@ const exampleNote = reactive<Misskey.entities.Note>({
 		md5: 'c44286cf152d0740be0ce5ad45ea85c3',
 		size: 827532,
 		isSensitive: false,
+		isAiGenerated: false,
 		blurhash: 'LXNA3TD*XAIA%1%M%gt7.TofRioz',
 		properties: {
 			width: 256,

@@ -1,0 +1,12 @@
+diff --git a/driver/postgres/PostgresDriver.js b/driver/postgres/PostgresDriver.js
+--- a/driver/postgres/PostgresDriver.js
++++ b/driver/postgres/PostgresDriver.js
+@@ -955,7 +955,7 @@ class PostgresDriver {
+             return this.compareJsonDefaults(columnMetadata, tableColumn);
+         }
+         const columnDefault = this.lowerDefaultValueIfNecessary(this.normalizeDefault(columnMetadata));
+-        return columnDefault === tableColumn.default;
++        return columnDefault === tableColumn.default || columnDefault === undefined && tableColumn.default?.toLowerCase() === 'null';
+     }
+     /**
+      * Compares json/jsonb default values of the column.

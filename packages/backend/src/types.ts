@@ -19,13 +19,14 @@ import type { MiNote } from '@/models/Note.js';
  * quote - 投稿が引用Renoteされた
  * reaction - 投稿にリアクションされた
  * pollEnded - 自分のアンケートもしくは自分が投票したアンケートが終了した
+ * scheduledNotePosted - 予約したノートが投稿された
+ * scheduledNotePostFailed - 予約したノートの投稿に失敗した
  * receiveFollowRequest - フォローリクエストされた
  * followRequestAccepted - 自分の送ったフォローリクエストが承認された
  * roleAssigned - ロールが付与された
  * chatRoomInvitationReceived - チャットルームに招待された
  * achievementEarned - 実績を獲得
  * noteScheduled - 予約投稿が予約された
- * scheduledNotePosted - 予約投稿が投稿された
  * scheduledNoteError - 予約投稿がエラーになった
  * sensitiveFlagAssigned - センシティブフラグが付与された
  * exportCompleted - エクスポートが完了
@@ -43,6 +44,8 @@ export const notificationTypes = [
 	'quote',
 	'reaction',
 	'pollEnded',
+	'scheduledNotePosted',
+	'scheduledNotePostFailed',
 	'receiveFollowRequest',
 	'followRequestAccepted',
 	'roleAssigned',
@@ -51,7 +54,6 @@ export const notificationTypes = [
 	'exportCompleted',
 	'login',
 	'noteScheduled',
-	'scheduledNotePosted',
 	'scheduledNoteError',
 	'sensitiveFlagAssigned',
 	'createToken',
@@ -68,6 +70,8 @@ export const groupedNotificationTypes = [
 export const obsoleteNotificationTypes = ['pollVote', 'groupInvited'] as const;
 
 export const noteVisibilities = ['public', 'home', 'followers', 'specified'] as const;
+
+export const noteReactionAcceptances = ['likeOnly', 'likeOnlyForRemote', 'nonSensitiveOnly', 'nonSensitiveOnlyForLocalLikeOnlyForRemote', null] as const;
 
 export const mutedNoteReasons = ['word', 'manual', 'spam', 'other'] as const;
 
@@ -105,6 +109,8 @@ export const moderationLogTypes = [
 	'deleteRole',
 	'clearQueue',
 	'promoteQueue',
+	'pauseQueue',
+	'resumeQueue',
 	'deleteDriveFile',
 	'deleteNote',
 	'createGlobalAnnouncement',
@@ -136,6 +142,7 @@ export const moderationLogTypes = [
 	'createAvatarDecoration',
 	'updateAvatarDecoration',
 	'deleteAvatarDecoration',
+	'unsetMfa',
 	'unsetUserAvatar',
 	'unsetUserBanner',
 	'unsetUserMutualLink',
@@ -234,6 +241,8 @@ export type ModerationLogPayloads = {
 	};
 	clearQueue: Record<string, never>;
 	promoteQueue: Record<string, never>;
+	pauseQueue: Record<string, never>;
+	resumeQueue: Record<string, never>;
 	deleteDriveFile: {
 		fileId: string;
 		fileUserId: string | null;
@@ -389,6 +398,11 @@ export type ModerationLogPayloads = {
 		avatarDecorationId: string;
 		avatarDecoration: any;
 	};
+	unsetMfa: {
+		userId: string;
+		userUsername: string;
+		userHost: string | null;
+	};
 	unsetUserAvatar: {
 		userId: string;
 		userUsername: string;
@@ -404,6 +418,7 @@ export type ModerationLogPayloads = {
 	unsetUserMutualLink: {
 		userId: string;
 		userUsername: string;
+		userHost: string | null;
 		userMutualLinkSections: { name: string | null; mutualLinks: { id: string; url: string; fileId: string; description: string | null; imgSrc: string; }[]; }[] | []
 	};
 	createSystemWebhook: {
@@ -473,14 +488,14 @@ export type MinimumUser = {
 };
 
 export type NoteCreateOption = {
+	id?: MiNote['id'];
 	createdAt?: Date | null;
-	scheduledAt?: Date | null;
 	name?: string | null;
 	text?: string | null;
 	reply?: MiNote | null;
 	renote?: MiNote | null;
 	files?: MiDriveFile[] | null;
-	poll?: IPoll | null;
+	poll?: (IPoll & { expiredAfter?: number | null }) | null;
 	localOnly?: boolean | null;
 	dimension?: number | null;
 	reactionAcceptance?: MiNote['reactionAcceptance'];
@@ -489,6 +504,7 @@ export type NoteCreateOption = {
 	visibleUsers?: MinimumUser[] | null;
 	channel?: MiChannel | null;
 	apMentions?: MinimumUser[] | null;
+	apMentionRawCount?: number | null;
 	apHashtags?: string[] | null;
 	apEmojis?: string[] | null;
 	uri?: string | null;

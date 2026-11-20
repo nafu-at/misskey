@@ -10,6 +10,7 @@ import { NoteEntityService } from '@/core/entities/NoteEntityService.js';
 import { RoleService } from '@/core/RoleService.js';
 import { CacheService } from '@/core/CacheService.js';
 import { isUserRelated } from '@/misc/is-user-related.js';
+import { IdService } from '@/core/IdService.js';
 import { ApiError } from '../../error.js';
 
 export const meta = {
@@ -40,6 +41,8 @@ export const paramDef = {
 	type: 'object',
 	properties: {
 		query: { type: 'string' },
+		rangeStartAt: { type: 'integer', nullable: true },
+		rangeEndAt: { type: 'integer', nullable: true },
 		sinceId: { type: 'string', format: 'misskey:id' },
 		untilId: { type: 'string', format: 'misskey:id' },
 		sinceDate: { type: 'integer' },
@@ -65,8 +68,14 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 		private searchService: SearchService,
 		private roleService: RoleService,
 		private cacheService: CacheService,
+		private idService: IdService,
 	) {
 		super(meta, paramDef, async (ps, me) => {
+			const untilId = ps.untilDate != null && (ps.untilId == null || ps.untilDate < this.idService.parse(ps.untilId).date.getTime())
+				? this.idService.gen(ps.untilDate) : ps.untilId;
+			const sinceId = ps.sinceDate != null && (ps.sinceId == null || ps.sinceDate > this.idService.parse(ps.sinceId).date.getTime())
+				? this.idService.gen(ps.sinceDate) : ps.sinceId;
+
 			const policies = await this.roleService.getUserPolicies(me ? me.id : null);
 			if (!policies.canSearchNotes) {
 				throw new ApiError(meta.errors.unavailable);
@@ -84,11 +93,11 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 				userId: ps.userId,
 				channelId: ps.channelId,
 				host: ps.host,
+				rangeStartAt: ps.rangeStartAt,
+				rangeEndAt: ps.rangeEndAt,
 			}, {
-				untilId: ps.untilId,
-				sinceId: ps.sinceId,
-				sinceDate: ps.sinceDate,
-				untilDate: ps.untilDate,
+				untilId: untilId,
+				sinceId: sinceId,
 				limit: ps.limit,
 			})).filter(note => !(me && (isUserRelated(note, userIdsWhoBlockingMe) || isUserRelated(note, userIdsWhoMeMuting))));
 

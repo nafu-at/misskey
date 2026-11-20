@@ -5,8 +5,10 @@
 
 import * as crypto from 'node:crypto';
 import { URL } from 'node:url';
+import { promisify } from 'node:util';
 import { Inject, Injectable } from '@nestjs/common';
-import { JSDOM } from 'jsdom';
+import * as htmlParser from 'node-html-parser';
+import { RsaKeyPair } from 'slacc';
 import { DI } from '@/di-symbols.js';
 import type { Config } from '@/config.js';
 import type { MiUser } from '@/models/User.js';
@@ -17,8 +19,8 @@ import { LoggerService } from '@/core/LoggerService.js';
 import { bindThis } from '@/decorators.js';
 import type Logger from '@/logger.js';
 import { validateContentTypeSetAsActivityPub } from '@/core/activitypub/misc/validator.js';
+import { assertActivityMatchesUrl, FetchAllowSoftFailMask } from '@/core/activitypub/misc/check-against-url.js';
 import type { IObject } from './type.js';
-import { FetchAllowSoftFailMask } from "@/core/activitypub/misc/check-against-url.js";
 
 type Request = {
 	url: string;
@@ -39,7 +41,7 @@ type PrivateKey = {
 };
 
 export class ApRequestCreator {
-	static createSignedPost(args: { key: PrivateKey, url: string, body: string, digest?: string, additionalHeaders: Record<string, string> }): Signed {
+	static async createSignedPost(args: { key: PrivateKey, url: string, body: string, digest?: string, additionalHeaders: Record<string, string> }): Promise<Signed> {
 		const u = new URL(args.url);
 		const digestHeader = args.digest ?? this.createDigest(args.body);
 
@@ -54,7 +56,7 @@ export class ApRequestCreator {
 			}, args.additionalHeaders),
 		};
 
-		const result = this.#signToRequest(request, args.key, ['(request-target)', 'date', 'host', 'digest']);
+		const result = await this.#signToRequest(request, args.key, ['(request-target)', 'date', 'host', 'digest']);
 
 		return {
 			request,
@@ -68,7 +70,7 @@ export class ApRequestCreator {
 		return `SHA-256=${crypto.createHash('sha256').update(body).digest('base64')}`;
 	}
 
-	static createSignedGet(args: { key: PrivateKey, url: string, additionalHeaders: Record<string, string> }): Signed {
+	static async createSignedGet(args: { key: PrivateKey, url: string, additionalHeaders: Record<string, string> }): Promise<Signed> {
 		const u = new URL(args.url);
 
 		const request: Request = {
@@ -81,7 +83,7 @@ export class ApRequestCreator {
 			}, args.additionalHeaders),
 		};
 
-		const result = this.#signToRequest(request, args.key, ['(request-target)', 'date', 'host', 'accept']);
+		const result = await this.#signToRequest(request, args.key, ['(request-target)', 'date', 'host']);
 
 		return {
 			request,
@@ -91,9 +93,10 @@ export class ApRequestCreator {
 		};
 	}
 
-	static #signToRequest(request: Request, key: PrivateKey, includeHeaders: string[]): Signed {
+	static async #signToRequest(request: Request, key: PrivateKey, includeHeaders: string[]): Promise<Signed> {
 		const signingString = this.#genSigningString(request, includeHeaders);
-		const signature = crypto.sign('sha256', Buffer.from(signingString), key.privateKeyPem).toString('base64');
+		const sign = promisify(RsaKeyPair.prototype.sign).bind(RsaKeyPair.fromPem(key.privateKeyPem));
+		const signature = (await sign(Buffer.from(signingString))).toString('base64');
 		const signatureHeader = `keyId="${key.keyId}",algorithm="rsa-sha256",headers="${includeHeaders.join(' ')}",signature="${signature}"`;
 
 		request.headers = this.#objectAssignWithLcKey(request.headers, {
@@ -159,7 +162,7 @@ export class ApRequestService {
 
 		const keypair = await this.userKeypairService.getUserKeypair(user.id);
 
-		const req = ApRequestCreator.createSignedPost({
+		const req = await ApRequestCreator.createSignedPost({
 			key: {
 				privateKeyPem: keypair.privateKey,
 				keyId: `${this.config.url}/users/${user.id}#main-key`,
@@ -190,7 +193,7 @@ export class ApRequestService {
 		const _followAlternate = followAlternate ?? true;
 		const keypair = await this.userKeypairService.getUserKeypair(user.id);
 
-		const req = ApRequestCreator.createSignedGet({
+		const req = await ApRequestCreator.createSignedGet({
 			key: {
 				privateKeyPem: keypair.privateKey,
 				keyId: `${this.config.url}/users/${user.id}#main-key`,
@@ -216,17 +219,18 @@ export class ApRequestService {
 			_followAlternate
 		) {
 			const html = await res.text();
-			try {
-				const fragment = JSDOM.fragment(html);
 
-				const alternate = fragment.querySelector('head > link[rel="alternate"][type="application/activity+json"]');
+			try {
+				const document = htmlParser.parse(html);
+
+				const alternate = document.querySelector('head > link[rel="alternate"][type="application/activity+json"]');
 				if (alternate) {
 					const href = alternate.getAttribute('href');
-					if (href && this.utilityService.isRelatedUris(url, href)) {
+					if (href && this.utilityService.punyHost(url) === this.utilityService.punyHost(href)) {
 						return await this.signedGet(href, user, allowSoftfail, false);
 					}
 				}
-			} catch (e) {
+			} catch (_) {
 				// something went wrong parsing the HTML, ignore the whole thing
 			}
 		}
@@ -236,8 +240,8 @@ export class ApRequestService {
 		const finalUrl = res.url; // redirects may have been involved
 		const activity = await res.json() as IObject;
 
-		this.utilityService.assertActivityRelatedToUrl(activity, finalUrl);
-		// assertActivityMatchesUrl(url, activity, finalUrl, allowSoftfail);
+		assertActivityMatchesUrl(url, activity, finalUrl, allowSoftfail);
+
 		return activity;
 	}
 }

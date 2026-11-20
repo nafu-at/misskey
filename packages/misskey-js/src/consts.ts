@@ -13,11 +13,34 @@ import type {
 	Role,
 	ReversiGameDetailed,
 	SystemWebhook,
-	UserLite,
 	ChatRoom,
 } from './autogen/models.js';
 
-export const notificationTypes = ['note', 'follow', 'mention', 'reply', 'renote', 'quote', 'reaction', 'pollVote', 'pollEnded', 'receiveFollowRequest', 'followRequestAccepted', 'groupInvited', 'app', 'roleAssigned', 'chatRoomInvitationReceived', 'achievementEarned', 'noteScheduled', 'scheduledNotePosted', 'scheduledNoteError'] as const;
+export const notificationTypes = [
+	'note',
+	'follow',
+	'mention',
+	'reply',
+	'renote',
+	'quote',
+	'reaction',
+	'pollEnded',
+	'scheduledNotePosted',
+	'scheduledNotePostFailed',
+	'receiveFollowRequest',
+	'followRequestAccepted',
+	'app',
+	'roleAssigned',
+	'chatRoomInvitationReceived',
+	'achievementEarned',
+	'exportCompleted',
+	'login',
+	'noteScheduled',
+	'scheduledNoteError',
+	'sensitiveFlagAssigned',
+	'createToken',
+	'test',
+] as const;
 
 export const noteVisibilities = ['public', 'home', 'followers', 'specified'] as const;
 
@@ -79,6 +102,9 @@ export const permissions = [
 	'read:admin:show-account-move-log',
 	'read:admin:show-user',
 	'write:admin:suspend-user',
+	'write:admin:unset-mfa',
+	'write:admin:unset-user-avatar',
+	'write:admin:unset-user-banner',
 	'write:admin:unsuspend-user',
 	'write:admin:meta',
 	'write:admin:user-name',
@@ -128,6 +154,7 @@ export const moderationLogTypes = [
 	'unsuspend',
 	'updateUserName',
 	'updateUserNote',
+	'updateInlinePolicies',
 	'addCustomEmoji',
 	'updateCustomEmoji',
 	'deleteCustomEmoji',
@@ -169,9 +196,10 @@ export const moderationLogTypes = [
 	'createAvatarDecoration',
 	'updateAvatarDecoration',
 	'deleteAvatarDecoration',
+	'unsetMfa',
 	'unsetUserAvatar',
 	'unsetUserBanner',
-	'unsetUserMutualBanner',
+	'unsetUserMutualLink',
 	'createSystemWebhook',
 	'updateSystemWebhook',
 	'deleteSystemWebhook',
@@ -183,6 +211,80 @@ export const moderationLogTypes = [
 	'deleteFlash',
 	'deleteGalleryPost',
 	'deleteChatRoom',
+	'updateProxyAccountDescription',
+] as const;
+
+export const rolePolicies = [
+	'gtlAvailable',
+	'required2fa',
+	'ltlAvailable',
+	'allowReport',
+	'canPublicNote',
+	'canScheduleNote',
+	'scheduleNoteLimit',
+	'scheduleNoteMaxDays',
+	'canInitiateConversation',
+	'canCreateContent',
+	'canUpdateContent',
+	'canDeleteContent',
+	'canPurgeAccount',
+	'canUpdateAvatar',
+	'canUpdateBanner',
+	'mentionLimit',
+	'canInvite',
+	'inviteLimit',
+	'inviteLimitCycle',
+	'inviteExpirationTime',
+	'canManageCustomEmojis',
+	'canManageAvatarDecorations',
+	'canSearchNotes',
+	'canSearchUsers',
+	'canUseTranslator',
+	'canUseDriveFileInSoundSettings',
+	'canUseReaction',
+	'canHideAds',
+	'canCreateChannel',
+	'driveCapacityMb',
+	'maxFileSizeMb',
+	'alwaysMarkNsfw',
+	'canUpdateBioMedia',
+	'skipNsfwDetection',
+	'pinLimit',
+	'antennaLimit',
+	'antennaNotesLimit',
+	'wordMuteLimit',
+	'webhookLimit',
+	'accessTokenLimit',
+	'clipLimit',
+	'noteEachClipsLimit',
+	'userListLimit',
+	'userEachUserListsLimit',
+	'rateLimitFactor',
+	'avatarDecorationLimit',
+	'canImportAntennas',
+	'canImportBlocking',
+	'canImportFollowing',
+	'canImportMuting',
+	'canImportUserLists',
+	'mutualLinkSectionLimit',
+	'mutualLinkLimit',
+	'chatAvailability',
+	'uploadableFileTypes',
+	'noteDraftLimit',
+	'watermarkAvailable',
+] as const;
+
+export const queueTypes = [
+	'system',
+	'endedPollNotification',
+	'postScheduledNote',
+	'deliver',
+	'inbox',
+	'db',
+	'relationship',
+	'objectStorage',
+	'userWebhookDeliver',
+	'systemWebhookDeliver',
 ] as const;
 
 // See: packages/backend/src/core/ReversiService.ts@L410
@@ -197,7 +299,15 @@ export const reversiUpdateKeys = [
 
 export type ReversiUpdateKey = typeof reversiUpdateKeys[number];
 
-export type AvatarDecoration = UserLite['avatarDecorations'][number];
+export type AvatarDecoration = {
+	id: string;
+	name: string;
+	url: string;
+	angle?: number;
+	flipH?: boolean;
+	offsetX?: number;
+	offsetY?: number;
+};
 
 export type ReceivedAbuseReport = {
 	reportId: AbuseReportNotificationRecipient['id'];
@@ -233,6 +343,13 @@ export type ModerationLogPayloads = {
 		userHost: string | null;
 		before: string | null;
 		after: string | null;
+	};
+	updateInlinePolicies: {
+		userId: string;
+		userUsername: string;
+		userHost: string | null;
+		before: unknown;
+		after: unknown;
 	};
 	addCustomEmoji: {
 		emojiId: string;
@@ -434,6 +551,11 @@ export type ModerationLogPayloads = {
 		avatarDecorationId: string;
 		avatarDecoration: AvatarDecoration;
 	};
+	unsetMfa: {
+		userId: string;
+		userUsername: string;
+		userHost: string | null;
+	};
 	unsetUserAvatar: {
 		userId: string;
 		userUsername: string;
@@ -449,7 +571,8 @@ export type ModerationLogPayloads = {
 	unsetUserMutualLink: {
 		userId: string;
 		userUsername: string;
-		mutualLinkSections: string;
+		userHost: string | null;
+		userMutualLinkSections: { name: string | null; mutualLinks: { id: string; url: string; fileId: string; description: string | null; imgSrc: string; }[]; }[];
 	};
 	createSystemWebhook: {
 		systemWebhookId: string;
@@ -504,4 +627,8 @@ export type ModerationLogPayloads = {
 		roomId: string;
 		room: ChatRoom;
 	};
+	updateProxyAccountDescription: {
+		before: string | null;
+		after: string | null;
+	}
 };

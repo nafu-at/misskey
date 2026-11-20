@@ -4,14 +4,14 @@ SPDX-License-Identifier: AGPL-3.0-only
 -->
 
 <template>
-<div :class="$style.root">
-	<MkA v-if="instance.emailRequiredForSignup && $i && !$i.email" :class="$style.item" to="/settings/email">
+<div v-if="$i" :class="$style.root">
+	<MkA v-if="instance.emailRequiredForSignup && !$i.email" :class="$style.item" to="/settings/email">
 		<span :class="$style.icon">
 			<i class="ti ti-circle-x" style="color: var(--MI_THEME-error);"></i>
 		</span>
 		<span :class="$style.title">{{ i18n.tsx.emailRegistrationRequiredBanner({ instance: instanceName }) }}</span>
 	</MkA>
-	<MkA v-if="$i && $i.email && !$i.emailVerified" :class="$style.item" to="/settings/email">
+	<MkA v-if="$i.email && !$i.emailVerified" :class="$style.item" to="/settings/email">
 		<span :class="$style.icon">
 			<i class="ti ti-mail"></i>
 		</span>

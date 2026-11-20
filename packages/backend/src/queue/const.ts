@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import type { Config, RedisOptionsSource } from '@/config.js';
+import { MetricsTime } from 'bullmq';
+import type { RedisOptionsSource } from '@/config.js';
 import type * as Bull from 'bullmq';
 import type { RedisOptions } from 'ioredis';
 
@@ -12,6 +13,7 @@ export const QUEUE = {
 	INBOX: 'inbox',
 	SYSTEM: 'system',
 	ENDED_POLL_NOTIFICATION: 'endedPollNotification',
+	POST_SCHEDULED_NOTE: 'postScheduledNote',
 	DB: 'db',
 	RELATIONSHIP: 'relationship',
 	OBJECT_STORAGE: 'objectStorage',
@@ -40,5 +42,14 @@ export function baseQueueOptions(config: RedisOptions & RedisOptionsSource, queu
 			},
 		},
 		prefix: config.prefix ? `{${config.prefix}:queue:${name}}` : `{queue:${name}}`,
+	};
+}
+
+export function baseWorkerOptions(config: RedisOptions & RedisOptionsSource, workerOptions: Partial<Bull.WorkerOptions>, queueName: typeof QUEUE[keyof typeof QUEUE]): Bull.WorkerOptions {
+	return {
+		...baseQueueOptions(config, workerOptions, queueName),
+		metrics: {
+			maxDataPoints: MetricsTime.ONE_WEEK,
+		},
 	};
 }

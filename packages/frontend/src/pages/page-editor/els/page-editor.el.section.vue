@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 <template>
 <!-- eslint-disable vue/no-mutating-props -->
-<XContainer :draggable="true" @remove="() => emit('remove')">
+<XContainer :draggable="true" :dragStartCallback="dragStartCallback" @remove="() => emit('remove')">
 	<template #header><i class="ti ti-note"></i> {{ props.modelValue.title }}</template>
 	<template #func>
 		<button class="_button" @click="rename()">
@@ -24,22 +24,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import { defineAsyncComponent, inject, onMounted, watch, ref } from 'vue';
 import * as Misskey from 'misskey-js';
-import { v4 as uuid } from 'uuid';
 import XContainer from '../page-editor.container.vue';
+import { genId } from '@/utility/id.js';
 import * as os from '@/os.js';
 import { i18n } from '@/i18n.js';
 import { deepClone } from '@/utility/clone.js';
 import MkButton from '@/components/MkButton.vue';
-import { getPageBlockList } from '@/pages/page-editor/common.js';
+import { createPageBlock, getPageBlockList } from '@/pages/page-editor/common.js';
 
 const XBlocks = defineAsyncComponent(() => import('../page-editor.blocks.vue'));
 
 const props = defineProps<{
-	modelValue: Misskey.entities.PageBlock & { type: 'section'; },
+	dragStartCallback?: (ev: DragEvent) => void;
+	modelValue: Extract<Misskey.entities.PageBlock, { type: 'section'; }>,
 }>();
 
 const emit = defineEmits<{
-	(ev: 'update:modelValue', value: Misskey.entities.PageBlock & { type: 'section' }): void;
+	(ev: 'update:modelValue', value: Extract<Misskey.entities.PageBlock, { type: 'section'; }>): void;
 	(ev: 'remove'): void;
 }>();
 
@@ -59,7 +60,7 @@ async function rename() {
 		title: i18n.ts._pages.enterSectionTitle,
 		default: props.modelValue.title,
 	});
-	if (canceled) return;
+	if (canceled || title == null) return;
 	emit('update:modelValue', {
 		...props.modelValue,
 		title,
@@ -71,14 +72,13 @@ async function add() {
 		title: i18n.ts._pages.chooseBlock,
 		items: getPageBlockList(),
 	});
-	if (canceled) return;
+	if (canceled || type == null) return;
 
-	const id = uuid();
-	children.value.push({ id, type });
+	children.value.push(createPageBlock(type, genId()));
 }
 
 onMounted(() => {
-	if (props.modelValue.title == null) {
+	if (!props.modelValue.title) {
 		rename();
 	}
 });

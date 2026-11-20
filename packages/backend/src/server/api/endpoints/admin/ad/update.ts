@@ -36,7 +36,7 @@ export const paramDef = {
 		memo: { type: 'string' },
 		url: { type: 'string', minLength: 1 },
 		imageUrl: { type: 'string', minLength: 1 },
-		place: { type: 'string' },
+		place: { type: 'string', enum: ['square', 'horizontal', 'horizontal-big', 'vertical'] },
 		priority: { type: 'string' },
 		ratio: { type: 'integer' },
 		expiresAt: { type: 'integer' },
@@ -62,8 +62,9 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 
 			if (ad == null) throw new ApiError(meta.errors.noSuchAd);
 
-			let imageBlurhash: string | null | undefined;
+			let imageBlurhash: string | null | undefined = undefined;
 			if (ps.imageUrl != null) {
+				imageBlurhash = null;
 				try {
 					const [tmpPath, cleanup] = await createTemp();
 					try {

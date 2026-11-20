@@ -6,7 +6,8 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
-import { IncomingMessage } from 'http';
+import { describe, beforeAll, test } from 'vitest';
+import { IncomingMessage } from 'node:http';
 import {
 	api,
 	connectStream,
@@ -159,8 +160,8 @@ describe('API', () => {
 			user: { token: application3 },
 		}, {
 			status: 403,
-			code: 'PERMISSION_DENIED',
-			id: '1370e5b7-d4eb-4566-bb1d-7748ee6a1838',
+			code: 'ROLE_PERMISSION_DENIED',
+			id: 'c3d38592-54c0-429d-be96-5636b0431a61',
 		});
 
 		await failedApiCall({

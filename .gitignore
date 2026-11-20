@@ -12,9 +12,8 @@ report.*.json
 # pnpm
 .pnpm-store
 
-# Cypress
-cypress/screenshots
-cypress/videos
+# Playwright
+packages/frontend/test/e2e/artifacts
 
 # Coverage
 coverage
@@ -25,7 +24,7 @@ coverage
 !/.config/docker_example.yml
 !/.config/docker_example.env
 compose.yml
-!/.config/cypress-devcontainer.yml
+!/.config/playwright-devcontainer.yml
 docker-compose.yml
 !/.devcontainer/compose.yml
 !/.devcontainer/docker-compose.yml
@@ -39,6 +38,7 @@ docker-compose.yml
 built
 built-test
 js-built
+src-js
 /data
 /.cache-loader
 /db
@@ -77,3 +77,6 @@ vite.config.local-dev.ts.timestamp-*
 
 # Cryptocurrency Spam
 tea.yaml
+
+# Affinity
+*.af~lock~

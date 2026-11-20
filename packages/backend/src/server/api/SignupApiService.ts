@@ -79,8 +79,10 @@ export class SignupApiService {
 		reply: FastifyReply,
 	) {
 		const logger = this.loggerService.getLogger('api:signup');
-		logger.setContext({ username: request.body.username, email: request.body.emailAddress, ip: request.ip, headers: request.headers, span: request.headers['x-client-transaction-id'] ?? randomUUID() });
-		logger.info('Requested to create user account.');
+		logger.info({
+			message: 'Requested to create user account.',
+			attributes: { username: request.body.username, email: request.body.emailAddress, ip: request.ip, headers: request.headers, span: request.headers['x-client-transaction-id'] ?? randomUUID() },
+		});
 
 		const body = request.body;
 
@@ -144,7 +146,8 @@ export class SignupApiService {
 
 		let ticket: MiRegistrationTicket | null = null;
 
-		if (this.meta.disableRegistration || envOption.disableRegistration) {
+		// テスト時はこの機構は障害となるため無効にする
+		if (process.env.NODE_ENV !== 'test' && (this.meta.disableRegistration || envOption.disableRegistration)) {
 			if (invitationCode == null || typeof invitationCode !== 'string') {
 				logger.error('Invalid request: invitation code is required.');
 				reply.code(400);
@@ -273,8 +276,10 @@ export class SignupApiService {
 	@bindThis
 	public async signupPending(request: FastifyRequest<{ Body: { code: string; } }>, reply: FastifyReply) {
 		const logger = this.loggerService.getLogger('api:signup:pending');
-		logger.setContext({ code: request.body.code, ip: request.ip, headers: request.headers });
-		logger.info('Requested to complete creating user account.');
+		logger.info({
+			message: 'Requested to complete creating user account.',
+			attributes: { ip: request.ip, headers: request.headers },
+		});
 
 		const body = request.body;
 
@@ -288,7 +293,7 @@ export class SignupApiService {
 				throw new FastifyReplyError(400, 'EXPIRED');
 			}
 
-			const { account, secret } = await this.signupService.signup({
+			const { account } = await this.signupService.signup({
 				username: pendingUser.username,
 				passwordHash: pendingUser.password,
 			});

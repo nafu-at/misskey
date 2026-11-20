@@ -2,7 +2,7 @@
 	"compilerOptions": {
 		"allowJs": true,
 		"noEmitOnError": false,
-		"noImplicitAny": false,
+		"noImplicitAny": true,
 		"noImplicitReturns": true,
 		"noUnusedParameters": false,
 		"noUnusedLocals": false,
@@ -12,8 +12,8 @@
 		"sourceRoot": "/",
 		"inlineSources": true,
 		"target": "ES2022",
-		"module": "ES2022",
-		"moduleResolution": "bundler",
+		"module": "esnext",
+		"moduleResolution": "Bundler",
 		"removeComments": false,
 		"noLib": false,
 		"strict": true,
@@ -24,7 +24,7 @@
 		"isolatedModules": true,
 		"useDefineForClassFields": true,
 		"verbatimModuleSyntax": true,
-		"baseUrl": ".",
+		"skipLibCheck": true,
 		"paths": {
 			"@/*": ["./src/*"],
 			"@@/*": ["../frontend-shared/*"]
@@ -37,6 +37,7 @@
 		],
 		"types": [
 			"vite/client",
+			"vite-plugin-glsl/ext",
 			"vitest/importMeta"
 		],
 		"lib": [
@@ -55,6 +56,6 @@
 		"./@types/**/*.ts"
 	],
 	"exclude": [
-		".storybook/**/*"
+		"./src/**/*.stories.ts"
 	]
 }

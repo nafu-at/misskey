@@ -42,13 +42,14 @@ function reload() {
 	window.location.reload();
 }
 
-useStream().on('_connected_', resetDisconnected);
-useStream().on('_disconnected_', onDisconnected);
+const stream = useStream();
+stream.on('_connected_', resetDisconnected);
+stream.on('_disconnected_', onDisconnected);
 
 onUnmounted(() => {
 	window.clearTimeout(timeoutId.value);
-	useStream().off('_connected_', resetDisconnected);
-	useStream().off('_disconnected_', onDisconnected);
+	stream.off('_connected_', resetDisconnected);
+	stream.off('_disconnected_', onDisconnected);
 });
 </script>
 

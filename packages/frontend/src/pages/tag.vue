@@ -6,15 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 <template>
 <PageWithHeader v-model:tab="tab" :actions="headerActions" :tabs="headerTabs">
 	<div class="_spacer" style="--MI_SPACER-w: 800px;">
-			<div v-if="tab === 'all'">
-				<MkNotes ref="notes" class="" :pagination="pagination"/>
-			</div>
-			<div v-else-if="tab === 'localOnly'">
-				<MkNotes ref="notes" class="" :pagination="localOnlyPagination"/>
-			</div>
-			<div v-else-if="tab === 'withFiles'">
-				<MkNotes ref="notes" class="" :pagination="withFilesPagination"/>
-			</div>
+		<MkNotesTimeline :paginator="paginator"/>
 	</div>
 	<template v-if="$i" #footer>
 		<div :class="$style.footer">
@@ -27,14 +19,17 @@ SPDX-License-Identifier: AGPL-3.0-only
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from 'vue';
-import MkNotes from '@/components/MkNotes.vue';
+import { computed, markRaw, ref } from 'vue';
+import type { PageHeaderItem } from '@/types/page-header.js';
+import MkNotesTimeline from '@/components/MkNotesTimeline.vue';
 import MkButton from '@/components/MkButton.vue';
 import { definePage } from '@/page.js';
 import { i18n } from '@/i18n.js';
 import { $i } from '@/i.js';
 import { store } from '@/store.js';
 import * as os from '@/os.js';
+import { genEmbedCode } from '@/utility/get-embed-code.js';
+import { Paginator } from '@/utility/paginator.js';
 
 const tab = ref('all');
 
@@ -42,32 +37,14 @@ const props = defineProps<{
 	tag: string;
 }>();
 
-const pagination = {
-	endpoint: 'notes/search-by-tag' as const,
+const paginator = markRaw(new Paginator('notes/search-by-tag', {
 	limit: 10,
-	params: computed(() => ({
+	computedParams: computed(() => ({
 		tag: props.tag,
+		local: tab.value === 'localOnly' ? true : undefined,
+		withFiles: tab.value === 'withFiles' ? true : undefined,
 	})),
-};
-const notes = ref<InstanceType<typeof MkNotes>>();
-
-const localOnlyPagination = {
-	endpoint: 'notes/search-by-tag' as const,
-	limit: 10,
-	params: computed(() => ({
-		tag: props.tag,
-		local: true,
-	})),
-};
-
-const withFilesPagination = {
-	endpoint: 'notes/search-by-tag' as const,
-	limit: 10,
-	params: computed(() => ({
-		tag: props.tag,
-		withFiles: true,
-	})),
-};
+}));
 
 async function post() {
 	store.set('postFormHashtags', props.tag);
@@ -75,10 +52,22 @@ async function post() {
 	await os.post();
 	store.set('postFormHashtags', '');
 	store.set('postFormWithHashtags', false);
-	notes.value?.pagingComponent?.reload();
+	paginator.reload();
 }
 
-const headerActions = [];
+const headerActions = computed<PageHeaderItem[]>(() => [{
+	icon: 'ti ti-dots',
+	text: i18n.ts.more,
+	handler: (ev) => {
+		os.popupMenu([{
+			text: i18n.ts.embed,
+			icon: 'ti ti-code',
+			action: () => {
+				genEmbedCode('tags', props.tag);
+			},
+		}], ev.currentTarget ?? ev.target);
+	},
+}]);
 
 // computed(() => [
 // 	{

@@ -1,56 +1,64 @@
- /*
+/*
  * SPDX-FileCopyrightText: syuilo and misskey-project
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Scope } from '@nestjs/common';
 import type { Packed } from '@/misc/json-schema.js';
-import { NoteEntityService } from '@/core/entities/NoteEntityService.js';
-import { bindThis } from '@/decorators.js';
 import { RoleService } from '@/core/RoleService.js';
-import { isRenotePacked, isQuotePacked } from '@/misc/is-renote.js';
-import type { JsonObject } from '@/misc/json-value.js';
+import { NoteEntityService } from '@/core/entities/NoteEntityService.js';
 import { NoteStreamingHidingService } from '../NoteStreamingHidingService.js';
-import Channel, { type MiChannelService } from '../channel.js';
+import { bindThis } from '@/decorators.js';
+import { isRenotePacked, isQuotePacked } from '@/misc/is-renote.js';
+import { isInstanceMuted } from '@/misc/is-instance-muted.js';
+import { isUserRelated } from '@/misc/is-user-related.js';
+import type { JsonObject } from '@/misc/json-value.js';
+import Channel, { type ChannelRequest } from '../channel.js';
+import { REQUEST } from '@nestjs/core';
 
-class ChannelChannel extends Channel {
+@Injectable({ scope: Scope.TRANSIENT })
+export class ChannelChannel extends Channel {
 	public readonly chName = 'channel';
-	public static readonly shouldShare = false;
-	public static readonly requireCredential = false as const;
+	public static shouldShare = false;
+	public static requireCredential = false as const;
 	private channelId: string;
 	private minimize: boolean;
 
 	constructor(
+		@Inject(REQUEST)
+		request: ChannelRequest,
+
 		private roleService: RoleService,
 		private noteEntityService: NoteEntityService,
 		private noteStreamingHidingService: NoteStreamingHidingService,
-		id: string,
-		connection: Channel['connection'],
-		dimension?: number | null,
 	) {
-		super(id, connection, dimension);
+		super(request);
 		//this.onNote = this.onNote.bind(this);
 	}
 
 	@bindThis
 	public async init(params: JsonObject) {
-		if (typeof params.channelId !== 'string') return false;
+		if (typeof params.channelId !== 'string') return;
 		this.channelId = params.channelId;
 		this.minimize = !!(params.minimize ?? false);
 
 		// Subscribe stream
 		this.subscriber.on('notesStream', this.onNote);
-
-		return true;
 	}
 
 	@bindThis
-	private async onNote(note: Packed<'Note'>) {
+	private async onNote(sourceNote: Packed<'Note'>) {
+		let note = sourceNote;
 		if (note.channelId !== this.channelId) return;
+
+		if (note.user.requireSigninToViewContents && this.user == null) return;
+		if (note.renote?.user.requireSigninToViewContents && this.user == null) return;
+		if (note.reply?.user.requireSigninToViewContents && this.user == null) return;
 
 		if (note.reply) {
 			const reply = note.reply;
-			if (!this.isNoteVisibleForMe(reply)) return;
+			if (reply.visibility === 'followers' && !Object.hasOwn(this.following, reply.userId)) return;
+			if (reply.visibility === 'specified' && (this.user == null || !reply.visibleUserIds!.includes(this.user.id))) return;
 		}
 
 		if (!this.shouldDeliverByDimension(note)) return;
@@ -60,23 +68,18 @@ class ChannelChannel extends Channel {
 		if (!this.isNoteVisibleForMe(note)) return;
 		if (this.isNoteMutedOrBlocked(note)) return;
 
-		const { shouldSkip } = await this.noteStreamingHidingService.processHiding(note, this.user?.id ?? null);
-		if (shouldSkip) return;
+		const filtered = await this.noteStreamingHidingService.filter(note, this.user?.id ?? null);
+		if (!filtered) return;
+		note = filtered;
 
-		if (this.user) {
-			if (isRenotePacked(note) && !isQuotePacked(note)) {
-				if (note.renote && Object.keys(note.renote.reactions).length > 0) {
-					const myRenoteReaction = await this.noteEntityService.populateMyReaction(note.renote, this.user.id);
-					note.renote.myReaction = myRenoteReaction;
-				}
+		if (this.user && isRenotePacked(note) && !isQuotePacked(note)) {
+			if (note.renote && Object.keys(note.renote.reactions).length > 0) {
+				const myRenoteReaction = await this.noteEntityService.populateMyReaction(note.renote, this.user.id);
+				note = { ...note, renote: { ...note.renote, myReaction: myRenoteReaction } };
 			}
 		}
 
-		if (this.user && (note.visibleUserIds?.includes(this.user.id) ?? note.mentions?.includes(this.user.id))) {
-			this.connection.cacheNote(note);
-		}
-
-		if (this.minimize && ['public', 'home'].includes(note.visibility)) {
+		if (this.minimize && this.canUseNoteJsonCache(note)) {
 			const badgeRoles = this.iAmModerator ? await this.roleService.getUserBadgeRoles(note.userId, false) : undefined;
 
 			this.send('note', {
@@ -91,35 +94,38 @@ class ChannelChannel extends Channel {
 		}
 	}
 
+	/*
+	 * ミュートとブロックされてるを処理する
+	 */
+	protected override isNoteMutedOrBlocked(note: Packed<'Note'>): boolean {
+		// 流れてきたNoteがインスタンスミュートしたインスタンスが関わる
+		if (isInstanceMuted(note, new Set<string>(this.userProfile?.mutedInstances ?? []))) return true;
+
+		// 流れてきたNoteがミュートしているユーザーが関わる
+		if (isUserRelated(note, this.userIdsWhoMeMuting)) return true;
+		// 流れてきたNoteがブロックされているユーザーが関わる
+		if (isUserRelated(note, this.userIdsWhoBlockingMe)) return true;
+
+		// 流れてきたNoteがリノートをミュートしてるユーザが行ったもの
+		if (isRenotePacked(note) && !isQuotePacked(note) && this.userIdsWhoMeMutingRenotes.has(note.user.id)) return true;
+
+		// このソケットで見ているチャンネルがミュートされていたとしても、チャンネルを直接見ている以上は流すようにしたい
+		// ただし、他のミュートしているチャンネルは流さないようにもしたい
+		// ノート自体のチャンネルIDはonNoteでチェックしているので、ここではリノートのチャンネルIDをチェックする
+		if (
+			(note.renote) &&
+			(note.renote.channelId !== this.channelId) &&
+			(note.renote.channelId && this.mutingChannels.has(note.renote.channelId))
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
 	@bindThis
 	public dispose() {
 		// Unsubscribe events
 		this.subscriber.off('notesStream', this.onNote);
-	}
-}
-
-@Injectable()
-export class ChannelChannelService implements MiChannelService<false> {
-	public readonly shouldShare = ChannelChannel.shouldShare;
-	public readonly requireCredential = ChannelChannel.requireCredential;
-	public readonly kind = ChannelChannel.kind;
-
-	constructor(
-		private roleService: RoleService,
-		private noteEntityService: NoteEntityService,
-		private noteStreamingHidingService: NoteStreamingHidingService,
-	) {
-	}
-
-	@bindThis
-	public create(id: string, connection: Channel['connection'], dimension?: number | null): ChannelChannel {
-		return new ChannelChannel(
-			this.roleService,
-			this.noteEntityService,
-			this.noteStreamingHidingService,
-			id,
-			connection,
-			dimension,
-		);
 	}
 }

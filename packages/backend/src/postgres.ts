@@ -24,6 +24,7 @@ import { MiAuthSession } from '@/models/AuthSession.js';
 import { MiBlocking } from '@/models/Blocking.js';
 import { MiChannelFollowing } from '@/models/ChannelFollowing.js';
 import { MiChannelFavorite } from '@/models/ChannelFavorite.js';
+import { MiChannelMuting } from '@/models/ChannelMuting.js';
 import { MiClip } from '@/models/Clip.js';
 import { MiClipNote } from '@/models/ClipNote.js';
 import { MiClipFavorite } from '@/models/ClipFavorite.js';
@@ -44,9 +45,11 @@ import { MiRenoteMuting } from '@/models/RenoteMuting.js';
 import { MiNote } from '@/models/Note.js';
 import { MiNoteLanguage } from '@/models/NoteLanguage.js';
 import { MiScheduledNote } from '@/models/ScheduledNote.js';
+import { MiScheduledNoteMigration } from '@/models/ScheduledNoteMigration.js';
 import { MiNoteFavorite } from '@/models/NoteFavorite.js';
 import { MiNoteReaction } from '@/models/NoteReaction.js';
 import { MiNoteThreadMuting } from '@/models/NoteThreadMuting.js';
+import { MiNoteDraft } from '@/models/NoteDraft.js';
 import { MiPage } from '@/models/Page.js';
 import { MiPageLike } from '@/models/PageLike.js';
 import { MiPasswordResetRequest } from '@/models/PasswordResetRequest.js';
@@ -102,7 +105,7 @@ pg.types.setTypeParser(20, Number);
 
 export const dbLogger = new MisskeyLogger('db');
 
-const sqlLogger = dbLogger.createSubLogger('sql', 'gray', false);
+const sqlLogger = dbLogger.createSubLogger('sql', 'gray');
 
 export type LoggerProps = {
 	disableQueryTruncation?: boolean;
@@ -134,9 +137,7 @@ class MyCustomLogger implements Logger {
 		if (!this.props.disableQueryTruncation) {
 			modded = truncateSql(modded);
 		}
-
 		if (envOption.logJson) return sql;
-
 		return modded;
 	}
 
@@ -216,9 +217,11 @@ export const entities = [
 	MiNote,
 	MiNoteLanguage,
 	MiScheduledNote,
+	MiScheduledNoteMigration,
 	MiNoteFavorite,
 	MiNoteReaction,
 	MiNoteThreadMuting,
+	MiNoteDraft,
 	MiPage,
 	MiPageLike,
 	MiGalleryPost,
@@ -248,6 +251,7 @@ export const entities = [
 	MiChannel,
 	MiChannelFollowing,
 	MiChannelFavorite,
+	MiChannelMuting,
 	MiRegistryItem,
 	MiAd,
 	MiPasswordResetRequest,
@@ -378,6 +382,10 @@ export function createPostgresDataSource(config: Config) {
 		extra: {
 			statement_timeout: 1000 * 10,
 			...config.db.extra,
+		},
+		invalidWhereValuesBehavior: {
+			null: 'ignore',
+			undefined: 'ignore',
 		},
 		...(config.dbReplications ? {
 			replication: {

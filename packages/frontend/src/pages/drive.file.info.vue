@@ -23,9 +23,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<button v-tooltip="i18n.ts.createNoteFromTheFile" class="_button" :class="$style.fileQuickActionsOthersButton" @click="postThis()">
 					<i class="ti ti-pencil"></i>
 				</button>
-				<button v-if="isImage" v-tooltip="i18n.ts.cropImage" class="_button" :class="$style.fileQuickActionsOthersButton" @click="crop()">
-					<i class="ti ti-crop"></i>
-				</button>
 				<span v-if="!file.isSensitiveByModerator">
 					<button v-if="file.isSensitive" v-tooltip="i18n.ts.unmarkAsSensitive" class="_button" :class="$style.fileQuickActionsOthersButton" @click="toggleSensitive()">
 						<i class="ti ti-eye"></i>
@@ -79,25 +76,23 @@ SPDX-License-Identifier: AGPL-3.0-only
 			</MkKeyValue>
 		</div>
 	</div>
-	<div v-else class="_fullinfo">
-		<img :src="infoImageUrl" draggable="false"/>
-		<div>{{ i18n.ts.nothing }}</div>
-	</div>
+	<MkResult v-else type="empty"/>
 </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import * as Misskey from 'misskey-js';
 import MkInfo from '@/components/MkInfo.vue';
 import MkMediaList from '@/components/MkMediaList.vue';
 import MkKeyValue from '@/components/MkKeyValue.vue';
 import bytes from '@/filters/bytes.js';
-import { infoImageUrl } from '@/instance.js';
 import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
 import { misskeyApi } from '@/utility/misskey-api.js';
 import { useRouter } from '@/router.js';
+import { selectDriveFolder } from '@/utility/drive.js';
+import { globalEvents } from '@/events.js';
 
 const router = useRouter();
 
@@ -119,9 +114,8 @@ const folderHierarchy = computed(() => {
 	if (file.value.folder) get(file.value.folder);
 	return folderNames;
 });
-const isImage = computed(() => file.value?.type.startsWith('image/'));
 
-async function fetchInfo() {
+async function _fetch_() {
 	fetching.value = true;
 
 	file.value = await misskeyApi('drive/files/show', {
@@ -135,43 +129,38 @@ async function fetchInfo() {
 }
 
 function postThis() {
-	if (!file.value) return;
+	if (file.value == null) return;
 
 	os.post({
 		initialFiles: [file.value],
-	});
-}
-
-function crop() {
-	if (!file.value) return;
-
-	os.cropImage(file.value, {
-		aspectRatio: NaN,
-		uploadFolder: file.value.folderId ?? null,
+		instant: true,
 	});
 }
 
 function move() {
-	if (!file.value) return;
+	if (file.value == null) return;
 
-	os.selectDriveFolder(false).then(folder => {
+	const f = file.value;
+
+	selectDriveFolder(null).then(({ canceled, folders }) => {
+		if (canceled) return;
 		misskeyApi('drive/files/update', {
-			fileId: file.value.id,
-			folderId: folder[0] ? folder[0].id : null,
+			fileId: f.id,
+			folderId: folders[0] ? folders[0].id : null,
 		}).then(async () => {
-			await fetchInfo();
+			await _fetch_();
 		});
 	});
 }
 
 function toggleSensitive() {
-	if (!file.value) return;
+	if (file.value == null) return;
 
 	os.apiWithDialog('drive/files/update', {
 		fileId: file.value.id,
 		isSensitive: !file.value.isSensitive,
 	}).then(async () => {
-		await fetchInfo();
+		await _fetch_();
 	}).catch(err => {
 		os.alert({
 			type: 'error',
@@ -181,25 +170,18 @@ function toggleSensitive() {
 	});
 }
 
-function toggleAiGenerated() {
-	if (!file.value) return;
-
-	os.apiWithDialog('drive/files/update', {
+async function toggleAiGenerated() {
+	if (file.value == null) return;
+	file.value = await os.apiWithDialog('drive/files/update', {
 		fileId: file.value.id,
 		isAiGenerated: !file.value.isAiGenerated,
-	}).then(async () => {
-		await fetchInfo();
-	}).catch(err => {
-		os.alert({
-			type: 'error',
-			title: i18n.ts.error,
-			text: err.message,
-		});
 	});
 }
 
 function rename() {
-	if (!file.value) return;
+	if (file.value == null) return;
+
+	const f = file.value;
 
 	os.inputText({
 		title: i18n.ts.renameFile,
@@ -208,50 +190,55 @@ function rename() {
 	}).then(({ canceled, result: name }) => {
 		if (canceled) return;
 		os.apiWithDialog('drive/files/update', {
-			fileId: file.value.id,
+			fileId: f.id,
 			name: name,
 		}).then(async () => {
-			await fetchInfo();
+			await _fetch_();
 		});
 	});
 }
 
-function describe() {
-	if (!file.value) return;
+async function describe() {
+	if (file.value == null) return;
 
-	os.popup(defineAsyncComponent(() => import('@/components/MkFileCaptionEditWindow.vue')), {
+	const f = file.value;
+
+	const { dispose } = await os.popupAsyncWithDialog(import('@/components/MkFileCaptionEditWindow.vue').then(x => x.default), {
 		default: file.value.comment ?? '',
 		file: file.value,
 	}, {
 		done: caption => {
 			os.apiWithDialog('drive/files/update', {
-				fileId: file.value.id,
+				fileId: f.id,
 				comment: caption.length === 0 ? null : caption,
 			}).then(async () => {
-				await fetchInfo();
+				await _fetch_();
 			});
 		},
-	}, 'closed');
+		closed: () => dispose(),
+	});
 }
 
 async function deleteFile() {
-	if (!file.value) return;
+	if (file.value == null) return;
 
 	const { canceled } = await os.confirm({
 		type: 'warning',
 		text: i18n.tsx.driveFileDeleteConfirm({ name: file.value.name }),
 	});
-
 	if (canceled) return;
+
 	await os.apiWithDialog('drive/files/delete', {
 		fileId: file.value.id,
 	});
 
-	router.push('/my/drive');
+	globalEvents.emit('driveFilesDeleted', [file.value]);
+
+	router.replace('/my/drive');
 }
 
 onMounted(async () => {
-	await fetchInfo();
+	await _fetch_();
 });
 </script>
 

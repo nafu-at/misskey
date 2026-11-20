@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 <template>
 <XColumn :menu="menu" :column="column" :isStacked="isStacked" :refresher="async () => { await timeline?.reloadTimeline() }">
 	<template #header>
-		<i class="ti ti-device-tv"></i><span style="margin-left: 8px;">{{ column.name || channel?.name || i18n.ts._deck._columns.channel }}</span>
+		<i class="ti ti-device-tv"></i><span style="margin-left: 8px;">{{ column.name || column.timelineNameCache || i18n.ts._deck._columns.channel }}</span>
 		<span v-if="column.channelId && dimension > 0" :class="$style.dimensionBadge"><i class="ti ti-cube"></i>{{ dimension }}</span>
 	</template>
 
@@ -14,20 +14,20 @@ SPDX-License-Identifier: AGPL-3.0-only
 		<div style="padding: 8px; text-align: center;">
 			<MkButton primary gradate rounded inline small @click="post"><i class="ti ti-pencil"></i></MkButton>
 		</div>
-		<MkTimeline ref="timeline" src="channel" :channel="column.channelId" :dimension="dimension" @note="onNote"/>
+		<MkStreamingNotesTimeline ref="timeline" src="channel" :channel="column.channelId" :dimension="dimension" @note="onNote"/>
 	</template>
 </XColumn>
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref, shallowRef, watch, useTemplateRef, computed } from 'vue';
+import { onMounted, ref, shallowRef, watch, useTemplateRef } from 'vue';
 import * as Misskey from 'misskey-js';
 import XColumn from './column.vue';
 import type { Column } from '@/deck.js';
 import type { MenuItem } from '@/types/menu.js';
 import type { SoundStore } from '@/preferences/def.js';
 import { updateColumn } from '@/deck.js';
-import MkTimeline from '@/components/MkTimeline.vue';
+import MkStreamingNotesTimeline from '@/components/MkStreamingNotesTimeline.vue';
 import MkButton from '@/components/MkButton.vue';
 import * as os from '@/os.js';
 import { favoritedChannelsCache } from '@/cache.js';
@@ -52,13 +52,9 @@ const dimension = ref<number>(props.column.dimension ?? prefer.s.dimension);
 onMounted(() => {
 	if (props.column.channelId == null) {
 		setChannel();
-	}
-});
-
-watch([() => props.column.name, () => props.column.channelId], () => {
-	if (!props.column.name && props.column.channelId) {
+	} else if (!props.column.name && props.column.channelId) {
 		misskeyApi('channels/show', { channelId: props.column.channelId })
-			.then(value => channel.value = value);
+			.then(value => updateColumn(props.column.id, { timelineNameCache: value.name }));
 	}
 });
 
@@ -81,17 +77,18 @@ async function pickDimension() {
 
 async function setChannel() {
 	const channels = await favoritedChannelsCache.fetch();
-	const { canceled, result: chosenChannel } = await os.select({
+	const { canceled, result: chosenChannelId } = await os.select({
 		title: i18n.ts.selectChannel,
 		items: channels.map(x => ({
-			value: x, text: x.name,
+			value: x.id, label: x.name,
 		})),
-		default: props.column.channelId,
+		default: channels.find(x => x.id === props.column.channelId)?.id,
 	});
-	if (canceled || chosenChannel == null) return;
+	if (canceled || chosenChannelId == null) return;
+	const chosenChannel = channels.find(x => x.id === chosenChannelId)!;
 	updateColumn(props.column.id, {
 		channelId: chosenChannel.id,
-		name: chosenChannel.name,
+		timelineNameCache: chosenChannel.name,
 	});
 }
 

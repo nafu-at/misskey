@@ -6,7 +6,8 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
-import { channel, clip, galleryPost, page, play, post, signup, simpleGet, uploadFile } from '../utils.js';
+import { beforeAll, beforeEach, describe, test } from 'vitest';
+import { api, channel, clip, galleryPost, page, play, post, relativeFetch, signup, simpleGet, uploadFile } from '../utils.js';
 import type { SimpleGetResponse } from '../utils.js';
 import type * as misskey from 'misskey-js';
 
@@ -26,6 +27,7 @@ describe('Webリソース', () => {
 	let aliceUploadedFile: misskey.entities.DriveFile | null;
 	let alicesPost: misskey.entities.Note;
 	let alicePage: misskey.entities.Page;
+	let alicePrivatePage: misskey.entities.Page;
 	let alicePlay: misskey.entities.Flash;
 	let aliceClip: misskey.entities.Clip;
 	let aliceGalleryPost: misskey.entities.GalleryPost;
@@ -73,16 +75,24 @@ describe('Webリソース', () => {
 	};
 
 	const metaTag = (res: SimpleGetResponse, key: string, superkey = 'name'): string => {
-		return res.body.window.document.querySelector('meta[' + superkey + '="' + key + '"]')?.content;
+		return res.body.querySelector('meta[' + superkey + '="' + key + '"]')?.attributes.content;
 	};
 
 	beforeAll(async () => {
 		alice = await signup({ username: 'alice' });
+		await api('admin/update-meta', { federation: 'all' }, alice as misskey.entities.SignupResponse);
 		aliceUploadedFile = (await uploadFile(alice)).body;
 		alicesPost = await post(alice, {
 			text: 'test',
 		});
 		alicePage = await page(alice, {});
+		alicePrivatePage = await page(alice, {
+			name: 'private-page',
+			title: '非公開ページのタイトル',
+			summary: '非公開ページの概要',
+			eyeCatchingImageId: aliceUploadedFile!.id,
+			visibility: 'private',
+		});
 		alicePlay = await play(alice, {});
 		aliceClip = await clip(alice, {});
 		aliceGalleryPost = await galleryPost(alice, {
@@ -103,7 +113,7 @@ describe('Webリソース', () => {
 		{ path: '/bios', type: HTML },
 		{ path: '/cli', type: HTML },
 		{ path: '/flush', type: HTML },
-		{ path: '/robots.txt', type: 'text/plain; charset=utf-8' },
+		{ path: '/robots.txt', type: 'text/plain; charset=UTF-8' },
 		{ path: '/favicon.ico', type: 'image/vnd.microsoft.icon' },
 		{ path: '/opensearch.xml', type: 'application/opensearchdescription+xml' },
 		{ path: '/apple-touch-icon.png', type: 'image/png' },
@@ -155,8 +165,8 @@ describe('Webリソース', () => {
 		}));
 
 		describe(' has entry such ', () => {
-			beforeEach(() => {
-				post(alice, { text: '**a**' });
+			beforeEach(async () => {
+				await post(alice, { text: '**a**' });
 			});
 
 			test('MFMを含まない。', async () => {
@@ -277,6 +287,19 @@ describe('Webリソース', () => {
 		test('はGETできる。(存在しないIDでも。)', async () => await ok({
 			path: path(alice.username, 'xxxxxxxxxx'),
 		}));
+
+		test('非公開ページの内容をHTMLへ含めない。', async () => {
+			const res = await ok({
+				path: path(alice.username, alicePrivatePage.name),
+			});
+			const html = res.body.toString();
+
+			assert.strictEqual(metaTag(res, 'misskey:page-id'), undefined);
+			assert.strictEqual(html.includes(alicePrivatePage.id), false);
+			assert.strictEqual(html.includes(alicePrivatePage.title), false);
+			assert.strictEqual(html.includes(alicePrivatePage.summary!), false);
+			assert.strictEqual(html.includes(alicePrivatePage.eyeCatchingImage!.url), false);
+		});
 	});
 
 	describe('/users/:id', () => {
@@ -392,6 +415,53 @@ describe('Webリソース', () => {
 				path: path('xxxxxxxxxx'),
 				accept,
 			}));
+		});
+	});
+
+	describe('/notes/:id.json', () => {
+		const fetchNote = (noteId: string) => relativeFetch(`/notes/${noteId}.json`);
+		const cacheableCases: [string, misskey.Endpoints['notes/create']['req']][] = [
+			['public', { text: 'public note', visibility: 'public' }],
+			['home', { text: 'home note', visibility: 'home' }],
+			['次元', { text: 'dimension note', visibility: 'public', dimension: 1000 }],
+		];
+
+		test.each(cacheableCases)('%s投稿を公開キャッシュできる', async (_label, params) => {
+			const note = await post(alice, params);
+			const res = await fetchNote(note.id);
+
+			assert.strictEqual(res.status, 200);
+			assert.match(res.headers.get('cache-control') ?? '', /public/);
+			assert.strictEqual((await res.json() as { id: string }).id, note.id);
+		});
+
+		test.each(['followers', 'specified'] as const)('%s投稿を公開キャッシュしない', async (visibility) => {
+			const params: misskey.Endpoints['notes/create']['req'] = visibility === 'specified'
+				? { text: 'specified note', visibility, visibleUserIds: [bob.id] }
+				: { text: 'followers note', visibility };
+			const note = await post(alice, params);
+			const res = await fetchNote(note.id);
+
+			assert.strictEqual(res.status, 404);
+			assert.doesNotMatch(res.headers.get('cache-control') ?? '', /public/);
+		});
+
+		test('チャンネルのpublic投稿を公開キャッシュできる', async () => {
+			const note = await post(alice, { text: 'channel note', channelId: aliceChannel.id });
+			const res = await fetchNote(note.id);
+
+			assert.strictEqual(res.status, 200);
+			assert.match(res.headers.get('cache-control') ?? '', /public/);
+			assert.strictEqual((await res.json() as { id: string }).id, note.id);
+		});
+
+		test('非公開の返信先を含む投稿を公開キャッシュしない', async () => {
+			const reply = await post(alice, { text: 'followers reply target', visibility: 'followers' });
+			const note = await post(alice, { text: 'public reply', visibility: 'public', replyId: reply.id });
+			const res = await fetchNote(note.id);
+
+			assert.strictEqual(res.status, 404);
+			assert.doesNotMatch(res.headers.get('cache-control') ?? '', /public/);
 		});
 	});
 

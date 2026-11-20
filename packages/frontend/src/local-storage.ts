@@ -17,16 +17,17 @@ export type Keys = (
 	'lastUsed' |
 	'lang' |
 	'drafts' |
+	`postFormState:${string}` |
 	'hashtags' |
 	'colorScheme' |
 	'useSystemFont' |
 	'fontSize' |
 	'ui' |
 	'ui_temp' |
-	'locale' |
-	'localeVersion' |
+	'bootloaderLocales' |
 	'theme' |
 	'themeId' |
+	'themeCachedVersion' |
 	'customCss' |
 	'chatMessageDrafts' |
 	'scratchpad' |
@@ -34,6 +35,7 @@ export type Keys = (
 	'preferences' |
 	'latestPreferencesUpdate' |
 	'hidePreferencesRestoreSuggestion' |
+	'isSafeMode' |
 	`miux:${string}` |
 	`ui:folder:${string}` |
 	`themes:${string}` | // DEPRECATED

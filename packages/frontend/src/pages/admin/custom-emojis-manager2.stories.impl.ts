@@ -96,6 +96,7 @@ function createRender(params: {
 							md5: '',
 							size: file.size,
 							isSensitive: false,
+							isAiGenerated: false,
 							blurhash: null,
 							properties: {},
 							url: base64,

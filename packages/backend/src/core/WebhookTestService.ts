@@ -86,6 +86,7 @@ function generateDummyNote(override?: Partial<MiNote>): MiNote {
 		renoteCount: 10,
 		repliesCount: 5,
 		clippedCount: 0,
+		pageCount: 0,
 		reactions: {},
 		visibility: 'public',
 		uri: null,
@@ -107,6 +108,7 @@ function generateDummyNote(override?: Partial<MiNote>): MiNote {
 		renoteUserId: null,
 		renoteUserHost: null,
 		createdAt: new Date(),
+		renoteChannelId: null,
 		...override,
 	};
 }
@@ -413,7 +415,7 @@ export class WebhookTestService {
 			name: user.name,
 			username: user.username,
 			host: user.host,
-			avatarUrl: user.avatarId == null ? null : user.avatarUrl,
+			avatarUrl: (user.avatarId == null ? null : user.avatarUrl) ?? '',
 			avatarBlurhash: user.avatarId == null ? null : user.avatarBlurhash,
 			avatarDecorations: user.avatarDecorations.map(it => ({
 				id: it.id,

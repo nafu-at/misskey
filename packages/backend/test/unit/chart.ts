@@ -6,7 +6,8 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
-import { jest } from '@jest/globals';
+import { describe, beforeEach, afterEach, afterAll, test } from 'vitest';
+import type { Mocked } from 'vitest';
 import * as lolex from '@sinonjs/fake-timers';
 import { DataSource } from 'typeorm';
 import * as Redis from 'ioredis';
@@ -19,7 +20,7 @@ import { entity as TestGroupedChartEntity } from '@/core/chart/charts/entities/t
 import { entity as TestUniqueChartEntity } from '@/core/chart/charts/entities/test-unique.js';
 import { entity as TestIntersectionChartEntity } from '@/core/chart/charts/entities/test-intersection.js';
 import { loadConfig } from '@/config.js';
-import { coreLogger } from '@/logger.js';
+import Logger from '@/logger.js';
 
 describe('Chart', () => {
 	const config = loadConfig();
@@ -28,13 +29,13 @@ describe('Chart', () => {
 	const redisForTimelines = {
 		set: () => Promise.resolve('OK'),
 		get: () => Promise.resolve(null),
-	} as unknown as jest.Mocked<Redis.Redis>;
+	} as unknown as Mocked<Redis.Redis>;
 
 	let testChart: TestChart;
 	let testGroupedChart: TestGroupedChart;
 	let testUniqueChart: TestUniqueChart;
 	let testIntersectionChart: TestIntersectionChart;
-	let clock: lolex.InstalledClock;
+	let clock: lolex.Clock;
 
 	beforeEach(async () => {
 		if (db) db.destroy();
@@ -63,16 +64,16 @@ describe('Chart', () => {
 		});
 
 		await db.initialize();
-
-		const logger = coreLogger.createSubLogger('chart'); // TODO: モックにする
+		const logger = new Logger('chart'); // TODO: モックにする
 		testChart = new TestChart(db, redisForTimelines, logger);
 		testGroupedChart = new TestGroupedChart(db, redisForTimelines, logger);
 		testUniqueChart = new TestUniqueChart(db, redisForTimelines, logger);
 		testIntersectionChart = new TestIntersectionChart(db, redisForTimelines, logger);
 
 		clock = lolex.install({
+			// https://github.com/sinonjs/sinon/issues/2620
+			toFake: Object.keys(lolex.timers).filter((key) => !['nextTick', 'queueMicrotask'].includes(key)) as lolex.FakeMethod[],
 			now: new Date(Date.UTC(2000, 0, 1, 0, 0, 0)),
-			toFake: ['Date'],
 			shouldClearNativeTimers: true,
 		});
 	});

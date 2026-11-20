@@ -6,8 +6,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 <template>
 <MkWindow
 	ref="windowEl"
-	:initialWidth="500"
-	:initialHeight="500"
 	:canResize="true"
 	:closeButton="true"
 	:buttonsLeft="buttonsLeft"
@@ -22,15 +20,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 		</template>
 	</template>
 
-	<div :key="reloadCount" :class="$style.root" class="_forceShrinkSpacer">
-		<StackingRouterView v-if="prefer.s['experimental.stackingRouterView']" :router="windowRouter"/>
-		<RouterView v-else :router="windowRouter"/>
+	<div :class="$style.root" class="_forceShrinkSpacer">
+		<StackingRouterView v-if="prefer.s['experimental.stackingRouterView']" :key="reloadCount.toString() + ':stacking'" :router="windowRouter"/>
+		<RouterView v-else :key="reloadCount.toString() + ':non-stacking'" :router="windowRouter"/>
 	</div>
 </MkWindow>
 </template>
 
 <script lang="ts" setup>
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, useTemplateRef } from 'vue';
+import { computed, onMounted, onUnmounted, provide, ref, useTemplateRef, nextTick } from 'vue';
 import { url } from '@@/js/config.js';
 import { pageview } from 'vue-gtag';
 import type { PageMetadata } from '@/page.js';
@@ -59,8 +57,8 @@ const windowRouter = createRouter(props.initialPath);
 
 const pageMetadata = ref<null | PageMetadata>(null);
 const windowEl = useTemplateRef('windowEl');
-const history = ref<{ path: string; }[]>([{
-	path: windowRouter.getCurrentPath(),
+const _history_ = ref<{ path: string; }[]>([{
+	path: windowRouter.getCurrentFullPath(),
 }]);
 
 type WindowButton = {
@@ -71,17 +69,11 @@ type WindowButton = {
 };
 
 const buttonsLeft = computed(() => {
-	const buttons: WindowButton[] = [];
-
-	if (history.value.length > 1) {
-		buttons.push({
-			title: i18n.ts.goBack,
-			icon: 'ti ti-arrow-left',
-			onClick: back,
-		});
-	}
-
-	return buttons;
+	return _history_.value.length > 1 ? [{
+		icon: 'ti ti-arrow-left',
+		title: i18n.ts.goBack,
+		onClick: back,
+	}] : [];
 });
 const buttonsRight = computed(() => {
 	const buttons: WindowButton[] = [{
@@ -107,29 +99,47 @@ function getSearchMarker(path: string) {
 const searchMarkerId = ref<string | null>(getSearchMarker(props.initialPath));
 
 windowRouter.addListener('push', ctx => {
-	history.value.push({ path: ctx.path });
+	_history_.value.push({ path: ctx.fullPath });
 });
 
 windowRouter.addListener('replace', ctx => {
-	history.value.pop();
-	history.value.push({ path: ctx.path });
+	_history_.value.pop();
+	_history_.value.push({ path: ctx.fullPath });
+});
+
+windowRouter.addListener('forcePush', ctx => {
+	window.open(url + ctx.fullPath, '_blank', 'noopener');
+	if (ctx.onInit) {
+		nextTick(() => {
+			windowEl.value?.close();
+		});
+	}
+});
+
+windowRouter.addListener('forceReplace', ctx => {
+	window.open(url + ctx.fullPath, '_blank', 'noopener');
+	if (ctx.onInit) {
+		nextTick(() => {
+			windowEl.value?.close();
+		});
+	}
 });
 
 windowRouter.addListener('change', ctx => {
-	if (_DEV_) console.log('windowRouter: change', ctx.path);
-	searchMarkerId.value = getSearchMarker(ctx.path);
+	if (_DEV_) console.log('windowRouter: change', ctx.fullPath);
+	searchMarkerId.value = getSearchMarker(ctx.fullPath);
 
 	if (instance.googleAnalyticsId) {
 		nextTick(() =>
 			pageview({
 				page_title: pageMetadata.value?.title,
-				page_path: ctx.path,
+				page_path: ctx.fullPath,
 			}),
 		);
 	}
 });
 
-windowRouter.init();
+windowRouter.init(true);
 
 provide(DI.router, windowRouter);
 provide(DI.inAppSearchMarkerId, searchMarkerId);
@@ -153,20 +163,20 @@ const contextmenu = computed(() => ([{
 	icon: 'ti ti-external-link',
 	text: i18n.ts.openInNewTab,
 	action: () => {
-		window.open(url + windowRouter.getCurrentPath(), '_blank', 'noopener');
+		window.open(url + windowRouter.getCurrentFullPath(), '_blank', 'noopener');
 		windowEl.value?.close();
 	},
 }, {
 	icon: 'ti ti-link',
 	text: i18n.ts.copyLink,
 	action: () => {
-		copyToClipboard(url + windowRouter.getCurrentPath());
+		copyToClipboard(url + windowRouter.getCurrentFullPath());
 	},
 }]));
 
 function back() {
-	history.value.pop();
-	windowRouter.replace(history.value.at(-1)!.path);
+	_history_.value.pop();
+	windowRouter.replaceByPath(_history_.value.at(-1)!.path);
 }
 
 function reload() {
@@ -178,12 +188,12 @@ function close() {
 }
 
 function expand() {
-	mainRouter.push(windowRouter.getCurrentPath(), 'forcePage');
+	mainRouter.pushByPath(windowRouter.getCurrentFullPath(), 'forcePage');
 	windowEl.value?.close();
 }
 
 function popout() {
-	_popout(windowRouter.getCurrentPath(), windowEl.value?.$el);
+	_popout(windowRouter.getCurrentFullPath(), windowEl.value?.$el);
 	windowEl.value?.close();
 }
 

@@ -38,11 +38,7 @@ export interface BroadcastTypes {
 		emojis: Packed<'EmojiDetailed'>[];
 	};
 	emojiDeleted: {
-		emojis: {
-			id?: string;
-			name: string;
-			[other: string]: any;
-		}[];
+		emojis: Packed<'EmojiDetailed'>[];
 	};
 	announcementCreated: {
 		announcement: Packed<'Announcement'>;
@@ -136,8 +132,6 @@ type NoteStreamEventTypes = {
 		userId: MiNote['userId'];
 		visibility: MiNote['visibility'];
 		visibleUserIds: MiNote['visibleUserIds'];
-		mentions: MiNote['mentions'];
-		replyUserId: MiNote['replyUserId'];
 		body: NoteEventTypes[key];
 	};
 };
@@ -260,6 +254,8 @@ export interface InternalEventTypes {
 	metaUpdated: { before?: MiMeta; after: MiMeta; };
 	followChannel: { userId: MiUser['id']; channelId: MiChannel['id']; };
 	unfollowChannel: { userId: MiUser['id']; channelId: MiChannel['id']; };
+	muteChannel: { userId: MiUser['id']; channelId: MiChannel['id']; };
+	unmuteChannel: { userId: MiUser['id']; channelId: MiChannel['id']; };
 	updateUserProfile: MiUserProfile;
 	mute: { muterId: MiUser['id']; muteeId: MiUser['id']; };
 	unmute: { muterId: MiUser['id']; muteeId: MiUser['id']; };
@@ -392,8 +388,6 @@ export class GlobalEventService {
 			userId: note.userId,
 			visibility: note.visibility,
 			visibleUserIds: note.visibleUserIds,
-			mentions: note.mentions,
-			replyUserId: note.replyUserId,
 			body: value,
 		});
 	}

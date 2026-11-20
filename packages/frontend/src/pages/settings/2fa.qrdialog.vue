@@ -41,7 +41,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 							<div>
 								<a :class="$style.qrRoot" :href="twoFactorData.url"><img :class="$style.qr" :src="twoFactorData.qr"></a>
 								<!-- QRコード側にマージンが入っているので直下でOK -->
-								<div><MkButton inline rounded link :to="twoFactorData.url" :linkBehavior="'browser'">{{ i18n.ts.launchApp }}</MkButton></div>
+								<div><MkButton inline rounded type="routerLink" :to="twoFactorData.url" :linkBehavior="'browser'">{{ i18n.ts.launchApp }}</MkButton></div>
 							</div>
 							<MkKeyValue :copy="twoFactorData.url">
 								<template #key>{{ i18n.ts._2fa.step2Uri }}</template>
@@ -133,7 +133,7 @@ const emit = defineEmits<{
 
 const dialog = useTemplateRef('dialog');
 const page = ref(0);
-const token = ref<string | number | null>(null);
+const token = ref<string | null>(null);
 const backupCodes = ref<string[]>();
 
 function cancel() {
@@ -144,7 +144,7 @@ function cancel() {
 async function tokenDone() {
 	if (token.value == null) return;
 	const res = await os.apiWithDialog('i/2fa/done', {
-		token: typeof token.value === 'string' ? token.value : token.value.toString(),
+		token: token.value.toString(), // 実装ミスなどでnumberが入る可能性を払拭できないため念のためtoString
 	});
 
 	backupCodes.value = res.backupCodes;

@@ -11,49 +11,39 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 			<MkAvatar :class="$style.avatar" :user="$i" forceShowDecoration/>
 
-			<div v-if="matchedDecorations.length > 0" v-panel :class="$style.current" class="_gaps_s">
+			<div v-if="attachedDecorations.length > 0" v-panel :class="$style.current" class="_gaps_s">
 				<div>{{ i18n.ts.inUse }}</div>
 
-				<Sortable
-					v-model="matchedDecorations"
-					tag="div"
-					:class="$style.decorations"
-					itemKey="itemKey"
-					:animation="150"
-					:handle="'.' + $style.dragHandle"
-					@change="() => void saveCurrentDecorationOrder()"
-					@start="e => e.item.classList.add('active')"
-					@end="e => e.item.classList.remove('active')"
-				>
-					<template #item="{ element, index }">
-						<div :class="$style.decorationItem">
-							<button class="_button" :class="$style.dragHandle" :title="i18n.ts.rearrange" tabindex="-1">
-								<i class="ti ti-grip-vertical"></i>
-							</button>
-							<XDecoration
-								:decoration="element"
-								:angle="element.angle"
-								:flipH="element.flipH"
-								:offsetX="element.offsetX"
-								:offsetY="element.offsetY"
-								:active="true"
-								@click="openDecoration(element, index)"
-							/>
-						</div>
+				<MkDraggable :modelValue="attachedDecorations" direction="horizontal" manualDragStart withGaps @update:modelValue="saveOrder">
+					<template #default="{ item, index, dragStart }">
+						<button class="_button" :draggable="!savingOrder" :title="i18n.ts.rearrange" @dragstart.stop="dragStart">
+							<i class="ti ti-grip-vertical"></i>
+						</button>
+						<XDecoration
+							:decoration="item.definition"
+							:angle="item.attachment.angle"
+							:flipH="item.attachment.flipH"
+							:offsetX="item.attachment.offsetX"
+							:offsetY="item.attachment.offsetY"
+							:active="true"
+							@click="openDecoration(item.definition, index)"
+						/>
 					</template>
-				</Sortable>
+				</MkDraggable>
 
 				<MkButton danger @click="detachAllDecorations">{{ i18n.ts.detachAll }}</MkButton>
 			</div>
-
-			<div :class="$style.decorations">
-				<XDecoration
-					v-for="avatarDecoration in avatarDecorations"
-					:key="avatarDecoration.id"
-					:decoration="avatarDecoration"
-					@click="openDecoration(avatarDecoration)"
-				/>
-			</div>
+			<MkFoldableSection v-for="category in Object.keys(groupedDecorations)" :key="category" :expanded="true">
+				<template #header>{{ category || i18n.ts.other }}</template>
+				<div :class="$style.decorations">
+					<XDecoration
+						v-for="avatarDecoration in groupedDecorations[category]"
+						:key="avatarDecoration.id"
+						:decoration="avatarDecoration"
+						@click="openDecoration(avatarDecoration)"
+					/>
+				</div>
+			</MkFoldableSection>
 		</div>
 		<div v-else>
 			<MkLoading/>
@@ -63,79 +53,60 @@ SPDX-License-Identifier: AGPL-3.0-only
 </template>
 
 <script lang="ts" setup>
-import { computed, defineAsyncComponent, ref } from 'vue';
+import { computed, ref } from 'vue';
 import * as Misskey from 'misskey-js';
 import XDecoration from './avatar-decoration.decoration.vue';
+import XDialog from './avatar-decoration.dialog.vue';
+import MkDraggable from '@/components/MkDraggable.vue';
 import MkButton from '@/components/MkButton.vue';
+import MkFoldableSection from '@/components/MkFoldableSection.vue';
 import * as os from '@/os.js';
 import { misskeyApi } from '@/utility/misskey-api.js';
 import { i18n } from '@/i18n.js';
 import { ensureSignin } from '@/i.js';
 import MkInfo from '@/components/MkInfo.vue';
 import { definePage } from '@/page.js';
-
-const Sortable = defineAsyncComponent(() => import('vuedraggable').then(x => x.default));
+import { groupAvatarDecorations } from '@/utility/group-avatar-decorations.js';
 
 const $i = ensureSignin();
 
 const loading = ref(true);
 const avatarDecorations = ref<Misskey.entities.GetAvatarDecorationsResponse>([]);
-const matchedDecorations = ref<Array<Misskey.entities.GetAvatarDecorationsResponse[number] & Misskey.entities.UserDetailed['avatarDecorations'][number] & {
-	itemKey: string;
-}>>([]);
+const groupedDecorations = computed(() => groupAvatarDecorations(avatarDecorations.value));
 
-const decorationMap = computed(() => new Map(avatarDecorations.value.map(decoration => [decoration.id, decoration])));
+// The same decoration may be attached more than once.
+const attachedDecorations = computed(() => $i.avatarDecorations.map((attachment, index) => ({
+	id: String(index),
+	attachment,
+	definition: avatarDecorations.value.find(d => d.id === attachment.id)
+		?? { id: attachment.id, url: attachment.url, name: '?', roleIdsThatCanBeUsedThisDecoration: [] },
+})));
+const savingOrder = ref(false);
 
-misskeyApi('get-avatar-decorations').then(_avatarDecorations => {
-	avatarDecorations.value = _avatarDecorations;
-	syncMatchedDecorations();
-	loading.value = false;
-});
-
-function syncMatchedDecorations() {
-	if (loading.value && avatarDecorations.value.length === 0) return;
-
-	matchedDecorations.value = $i.avatarDecorations.map(userDecoration => {
-		const decoration = decorationMap.value.get(userDecoration.id);
-		const url = userDecoration.url.length > 0 ? userDecoration.url : (decoration?.url ?? '');
-		return {
-			...userDecoration,
-			...decoration,
-			url,
-			itemKey: Math.random().toString(36).slice(2),
-		};
-	}).filter(d => d.url); // URLが存在するもののみ
-}
-
-function normalizeDecoration(decoration) {
-	return {
-		id: decoration.id,
-		angle: decoration.angle ?? 0,
-		flipH: decoration.flipH ?? false,
-		url: decoration.url ?? '',
-		offsetX: decoration.offsetX ?? 0,
-		offsetY: decoration.offsetY ?? 0,
-	};
-}
-
-async function updateAvatarDecorations(update) {
-	const normalized = update.map(normalizeDecoration);
+async function saveOrder(items: typeof attachedDecorations.value) {
+	if (savingOrder.value) return;
+	savingOrder.value = true;
 	try {
-		await os.apiWithDialog('i/update', {
-			avatarDecorations: normalized,
-		});
-		$i.avatarDecorations = normalized;
+		const avatarDecorations = items.map(item => item.attachment);
+		await os.apiWithDialog('i/update', { avatarDecorations });
+		$i.avatarDecorations = avatarDecorations;
 	} finally {
-		syncMatchedDecorations();
+		savingOrder.value = false;
 	}
 }
 
-async function saveCurrentDecorationOrder() {
-	await updateAvatarDecorations(matchedDecorations.value);
-}
+misskeyApi('get-avatar-decorations').then(_avatarDecorations => {
+	avatarDecorations.value = _avatarDecorations;
+	loading.value = false;
+});
 
-function openDecoration(avatarDecoration, index?: number) {
-	os.popup(defineAsyncComponent(() => import('./avatar-decoration.dialog.vue')), {
+async function openDecoration(avatarDecoration: {
+	id: string;
+	url: string;
+	name: string;
+	roleIdsThatCanBeUsedThisDecoration: string[];
+}, index?: number) {
+	const { dispose } = os.popup(XDialog, {
 		decoration: avatarDecoration,
 		usingIndex: index ?? null,
 	}, {
@@ -149,7 +120,10 @@ function openDecoration(avatarDecoration, index?: number) {
 				offsetY: payload.offsetY,
 			};
 			const update = [...$i.avatarDecorations, decoration];
-			await updateAvatarDecorations(update);
+			await os.apiWithDialog('i/update', {
+				avatarDecorations: update,
+			});
+			$i.avatarDecorations = update;
 		},
 		'update': async (payload) => {
 			const decoration = {
@@ -161,19 +135,22 @@ function openDecoration(avatarDecoration, index?: number) {
 				offsetY: payload.offsetY,
 			};
 			const update = [...$i.avatarDecorations];
-			if (index == null) return;
-
-			update[index] = decoration;
-			await updateAvatarDecorations(update);
+			update[index!] = decoration;
+			await os.apiWithDialog('i/update', {
+				avatarDecorations: update,
+			});
+			$i.avatarDecorations = update;
 		},
 		'detach': async () => {
 			const update = [...$i.avatarDecorations];
-			if (index == null) return;
-
-			update.splice(index, 1);
-			await updateAvatarDecorations(update);
+			update.splice(index!, 1);
+			await os.apiWithDialog('i/update', {
+				avatarDecorations: update,
+			});
+			$i.avatarDecorations = update;
 		},
-	}, 'closed');
+		closed: () => dispose(),
+	});
 }
 
 function detachAllDecorations() {
@@ -182,7 +159,10 @@ function detachAllDecorations() {
 		text: i18n.ts.areYouSure,
 	}).then(async ({ canceled }) => {
 		if (canceled) return;
-		await updateAvatarDecorations([]);
+		await os.apiWithDialog('i/update', {
+			avatarDecorations: [],
+		});
+		$i.avatarDecorations = [];
 	});
 }
 
@@ -213,22 +193,5 @@ definePage(() => ({
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
 	grid-gap: 12px;
-}
-
-.decorationItem {
-	position: relative;
-}
-
-.dragHandle {
-	position: absolute;
-	top: 8px;
-	right: 8px;
-	z-index: 1;
-	width: 28px;
-	height: 28px;
-	border-radius: 999px;
-	cursor: move;
-	color: var(--MI_THEME-fgTransparentWeak);
-	background: var(--MI_THEME-bg);
 }
 </style>

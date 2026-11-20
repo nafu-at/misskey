@@ -64,6 +64,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 						<MkCustomEmoji v-if="typeof emoji !== 'string' && !Object.hasOwn(emoji, 'char')" class="emoji" :name="getKey(emoji)" :normal="true"/>
 						<MkEmoji v-else class="emoji" :emoji="getKey(emoji)" :normal="true"/>
 					</button>
+					<button v-tooltip="i18n.ts.settings" class="_button config" @click="settings"><i class="ti ti-settings"></i></button>
 				</div>
 			</section>
 
@@ -89,15 +90,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 			<header class="_acrylic">{{ i18n.ts.customEmojis }}</header>
 			<XSection
 				v-for="child in customEmojiFolderRoot.children"
-				:key="`custom:${child.category}`"
+				:key="`custom:${child.value}`"
 				:initialShown="false"
-				:emojis="computed(() => customEmojis.filter(e => filterCategory(e, child.category)).map(e => `:${e.name}:`))"
-				:disabledEmojis="computed(() => customEmojis.filter(e => filterCategory(e, child.category)).filter(e => !canReact(e)).map(e => `:${e.name}:`))"
+				:emojis="computed(() => customEmojis.filter(e => filterCategory(e, child.value)).map(e => `:${e.name}:`))"
+				:disabledEmojis="computed(() => customEmojis.filter(e => filterCategory(e, child.value)).filter(e => !canReact(e)).map(e => `:${e.name}:`))"
 				:hasChildSection="child.children.length !== 0"
 				:customEmojiTree="child.children"
 				@chosen="chosen"
 			>
-				{{ child.category || i18n.ts.other }}
+				{{ child.value || i18n.ts.other }}
 			</XSection>
 		</div>
 		<div v-once class="group">
@@ -139,6 +140,10 @@ import { customEmojiCategories, customEmojis, customEmojisMap } from '@/custom-e
 import { $i } from '@/i.js';
 import { checkReactionPermissions } from '@/utility/check-reaction-permissions.js';
 import { prefer } from '@/preferences.js';
+import { useRouter } from '@/router.js';
+import { haptic } from '@/utility/haptic.js';
+
+const router = useRouter();
 
 const props = withDefaults(defineProps<{
 	showPinned?: boolean;
@@ -147,7 +152,7 @@ const props = withDefaults(defineProps<{
 	asDrawer?: boolean;
 	asWindow?: boolean;
 	asReactionPicker?: boolean; // 今は使われてないが将来的に使いそう
-	targetNote?: Misskey.entities.Note;
+	targetNote?: Misskey.entities.Note | null;
 }>(), {
 	showPinned: true,
 });
@@ -184,19 +189,18 @@ const searchResultCustom = ref<Misskey.entities.EmojiSimple[]>([]);
 const searchResultUnicode = ref<UnicodeEmojiDef[]>([]);
 const tab = ref<'index' | 'custom' | 'unicode' | 'tags'>('index');
 
-const customEmojiFolderRoot: CustomEmojiFolderTree = { category: '', children: [] };
+const customEmojiFolderRoot: CustomEmojiFolderTree = { value: '', category: '', children: [] };
 
 function parseAndMergeCategories(input: string, root: CustomEmojiFolderTree): CustomEmojiFolderTree {
-	const parts = (input && input !== 'null' ? input : '').split(' / ');
+	const parts = input.split('/').map(p => p.trim());
 	let currentNode: CustomEmojiFolderTree = root;
 
 	for (const part of parts) {
-		const path = currentNode.category ? `${currentNode.category} / ${part}` : part;
-
-		let existingNode = currentNode.children.find((node) => node.category === path);
+		let existingNode = currentNode.children.find((node) => node.value === part);
 		if (!existingNode) {
 			const newNode: CustomEmojiFolderTree = {
-				category: path,
+				value: part,
+				category: input,
 				children: [],
 			};
 			currentNode.children.push(newNode);
@@ -325,7 +329,7 @@ watch(q, () => {
 
 			for (const index of Object.values(store.s.additionalUnicodeEmojiIndexes)) {
 				for (const emoji of emojis) {
-					if (keywords.every(keyword => index[emoji.char].some(k => k.includes(keyword)))) {
+					if (keywords.every(keyword => index[emoji.char]?.some(k => k.includes(keyword)))) {
 						matches.add(emoji);
 						if (matches.size >= max) break;
 					}
@@ -342,7 +346,7 @@ watch(q, () => {
 
 			for (const index of Object.values(store.s.additionalUnicodeEmojiIndexes)) {
 				for (const emoji of emojis) {
-					if (index[emoji.char].some(k => k.startsWith(newQ))) {
+					if (index[emoji.char]?.some(k => k.startsWith(newQ))) {
 						matches.add(emoji);
 						if (matches.size >= max) break;
 					}
@@ -359,7 +363,7 @@ watch(q, () => {
 
 			for (const index of Object.values(store.s.additionalUnicodeEmojiIndexes)) {
 				for (const emoji of emojis) {
-					if (index[emoji.char].some(k => k.includes(newQ))) {
+					if (index[emoji.char]?.some(k => k.includes(newQ))) {
 						matches.add(emoji);
 						if (matches.size >= max) break;
 					}
@@ -415,13 +419,13 @@ function getDef(emoji: string): string | Misskey.entities.EmojiSimple | UnicodeE
 }
 
 /** @see MkEmojiPicker.section.vue */
-function computeButtonTitle(ev: MouseEvent): void {
+function computeButtonTitle(ev: PointerEvent): void {
 	const elm = ev.target as HTMLElement;
 	const emoji = elm.dataset.emoji as string;
 	elm.title = getEmojiName(emoji);
 }
 
-function chosen(emoji: string | Misskey.entities.EmojiSimple | UnicodeEmojiDef, ev?: MouseEvent) {
+function chosen(emoji: string | Misskey.entities.EmojiSimple | UnicodeEmojiDef, ev?: PointerEvent) {
 	const el = ev && (ev.currentTarget ?? ev.target) as HTMLElement | null | undefined;
 	if (el && prefer.s.animation) {
 		const rect = el.getBoundingClientRect();
@@ -432,6 +436,8 @@ function chosen(emoji: string | Misskey.entities.EmojiSimple | UnicodeEmojiDef, 
 
 	const key = getKey(emoji);
 	emit('chosen', key);
+
+	haptic();
 
 	// 最近使った絵文字更新
 	if (!pinned.value?.includes(key)) {
@@ -495,6 +501,11 @@ function done(query?: string): boolean | void {
 	}
 }
 
+function settings() {
+	emit('esc');
+	router.push('/settings/emoji-palette');
+}
+
 onMounted(() => {
 	focus();
 });
@@ -524,46 +535,52 @@ defineExpose({
 		--eachSize: 50px;
 	}
 
+	&.s4 {
+		--eachSize: 55px;
+	}
+
+	&.s5 {
+		--eachSize: 60px;
+	}
+
 	&.w1 {
-		width: calc((var(--eachSize) * 5) + (#{$pad} * 2));
-		--columns: 1fr 1fr 1fr 1fr 1fr;
+		--columns: 5;
 	}
 
 	&.w2 {
-		width: calc((var(--eachSize) * 6) + (#{$pad} * 2));
-		--columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+		--columns: 6;
 	}
 
 	&.w3 {
-		width: calc((var(--eachSize) * 7) + (#{$pad} * 2));
-		--columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
+		--columns: 7;
 	}
 
 	&.w4 {
-		width: calc((var(--eachSize) * 8) + (#{$pad} * 2));
-		--columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
+		--columns: 8;
 	}
 
 	&.w5 {
-		width: calc((var(--eachSize) * 9) + (#{$pad} * 2));
-		--columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
+		--columns: 9;
 	}
 
 	&.h1 {
-		height: calc((var(--eachSize) * 4) + (#{$pad} * 2));
+		--rows: 4;
 	}
 
 	&.h2 {
-		height: calc((var(--eachSize) * 6) + (#{$pad} * 2));
+		--rows: 6;
 	}
 
 	&.h3 {
-		height: calc((var(--eachSize) * 8) + (#{$pad} * 2));
+		--rows: 8;
 	}
 
 	&.h4 {
-		height: calc((var(--eachSize) * 10) + (#{$pad} * 2));
+		--rows: 10;
 	}
+
+	width: calc((var(--eachSize) * var(--columns)) + (#{$pad} * 2));
+	height: calc((var(--eachSize) * var(--rows)) + (#{$pad} * 2));
 
 	&.asDrawer {
 		width: 100% !important;
@@ -579,8 +596,16 @@ defineExpose({
 
 				> .body {
 					display: grid;
-					grid-template-columns: var(--columns);
+					grid-template-columns: repeat(var(--columns), 1fr);
 					font-size: 30px;
+
+					> .config {
+						aspect-ratio: 1 / 1;
+						width: auto;
+						height: auto;
+						min-width: 0;
+						font-size: 14px;
+					}
 
 					> .item {
 						aspect-ratio: 1 / 1;
@@ -613,7 +638,7 @@ defineExpose({
 			::v-deep(section) {
 				> .body {
 					display: grid;
-					grid-template-columns: var(--columns);
+					grid-template-columns: repeat(var(--columns), 1fr);
 					font-size: 30px;
 
 					> .item {
@@ -681,12 +706,7 @@ defineExpose({
 		height: 100%;
 		overflow-y: auto;
 		overflow-x: hidden;
-
 		scrollbar-width: none;
-
-		&::-webkit-scrollbar {
-			display: none;
-		}
 
 		> .group {
 			&:not(.index) {
@@ -725,6 +745,15 @@ defineExpose({
 			> .body {
 				position: relative;
 				padding: $pad;
+
+				> .config {
+					position: relative;
+					padding: 0 3px;
+					width: var(--eachSize);
+					height: var(--eachSize);
+					contain: strict;
+					opacity: 0.5;
+				}
 
 				> .item {
 					position: relative;

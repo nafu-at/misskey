@@ -17,13 +17,13 @@ services:
 
   db:
     restart: always
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     ports:
       - "5432:5432"
     env_file:
       - .config/docker.env
     volumes:
-      - ./db:/var/lib/postgresql/data
+      - ./db:/var/lib/postgresql
     healthcheck:
       test: "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"
       interval: 5s
@@ -39,4 +39,3 @@ services:
 #      - .config/meilisearch.env
 #    volumes:
 #      - ./meili_data:/meili_data
-

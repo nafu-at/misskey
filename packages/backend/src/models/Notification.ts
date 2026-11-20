@@ -10,7 +10,9 @@ import { MiScheduledNote } from './ScheduledNote.js';
 import { MiAccessToken } from './AccessToken.js';
 import { MiRole } from './Role.js';
 import { MiDriveFile } from './DriveFile.js';
+import { MiNoteDraft } from './NoteDraft.js';
 
+// misskey-js の notificationTypes と同期すべし
 export type MiNotification = {
 	type: 'note';
 	id: string;
@@ -61,6 +63,16 @@ export type MiNotification = {
 	notifierId: MiUser['id'];
 	noteId: MiNote['id'];
 } | {
+	type: 'scheduledNotePosted';
+	id: string;
+	createdAt: string;
+	noteId: MiNote['id'];
+} | {
+	type: 'scheduledNotePostFailed';
+	id: string;
+	createdAt: string;
+	noteDraftId: MiNoteDraft['id'];
+} | {
 	type: 'receiveFollowRequest';
 	id: string;
 	createdAt: string;
@@ -92,11 +104,6 @@ export type MiNotification = {
 	id: string;
 	createdAt: string;
 	draftId: MiScheduledNote['id'];
-} | {
-	type: 'scheduledNotePosted';
-	id: string;
-	createdAt: string;
-	noteId: MiNote['id'];
 } | {
 	type: 'scheduledNoteError';
 	id: string;

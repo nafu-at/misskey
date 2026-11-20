@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 <template>
 <XColumn :menu="menu" :column="column" :isStacked="isStacked" :refresher="async () => { await timeline?.reloadTimeline() }">
 	<template #header>
-		<i v-if="column.tl != null" :class="basicTimelineIconClass(column.tl)"/>
+		<i v-if="column.tl != null" :class="basicTimelineIconClass(column.tl)"></i>
 		<span style="margin-left: 8px;">{{ column.name || (column.tl ? i18n.ts._timelines[column.tl] : null) || i18n.ts._deck._columns.tl }}</span>
 		<span v-if="column.tl != null && hasDimension(column.tl) && dimension > 0" :class="$style.dimensionBadge"><i class="ti ti-cube"></i>{{ dimension }}</span>
 	</template>
@@ -18,7 +18,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 		</p>
 		<p :class="$style.disabledDescription">{{ i18n.ts._disabledTimeline.description }}</p>
 	</div>
-	<MkTimeline
+	<MkStreamingNotesTimeline
 		v-else-if="column.tl"
 		ref="timeline"
 		:key="column.tl + withRenotes + withReplies + onlyFiles + dimension"
@@ -29,7 +29,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 		:withAiGenerated="withAiGenerated"
 		:onlyFiles="onlyFiles"
 		:dimension="dimension"
-		@note="onNote"
+		:sound="true"
+		:customSound="soundSetting"
 	/>
 </XColumn>
 </template>
@@ -41,12 +42,11 @@ import type { Column } from '@/deck.js';
 import type { MenuItem } from '@/types/menu.js';
 import type { SoundStore } from '@/preferences/def.js';
 import { removeColumn, updateColumn } from '@/deck.js';
-import MkTimeline from '@/components/MkTimeline.vue';
+import MkStreamingNotesTimeline from '@/components/MkStreamingNotesTimeline.vue';
 import * as os from '@/os.js';
 import { i18n } from '@/i18n.js';
 import { hasWithReplies, hasDimension, isAvailableBasicTimeline, basicTimelineIconClass } from '@/timelines.js';
 import { soundSettingsButton } from '@/ui/deck/tl-note-notification.js';
-import * as sound from '@/utility/sound.js';
 import { selectDimension } from '@/utility/dimension.js';
 import { claimAchievement } from '@/utility/achievements.js';
 import { prefer } from '@/preferences.js';
@@ -81,6 +81,12 @@ watch(withReplies, v => {
 watch(withSensitive, v => {
 	updateColumn(props.column.id, {
 		withSensitive: v,
+	});
+});
+
+watch(withAiGenerated, v => {
+	updateColumn(props.column.id, {
+		withAiGenerated: v,
 	});
 });
 
@@ -119,16 +125,17 @@ async function setType() {
 	const { canceled, result: src } = await os.select({
 		title: i18n.ts.timeline,
 		items: [{
-			value: 'home' as const, text: i18n.ts._timelines.home,
+			value: 'home', label: i18n.ts._timelines.home,
 		}, {
-			value: 'local' as const, text: i18n.ts._timelines.local,
+			value: 'local', label: i18n.ts._timelines.local,
 		}, {
-			value: 'media' as const, text: i18n.ts._timelines.media,
+			value: 'media', label: i18n.ts._timelines.media,
 		}, {
-			value: 'social' as const, text: i18n.ts._timelines.social,
+			value: 'social', label: i18n.ts._timelines.social,
 		}, {
-			value: 'global' as const, text: i18n.ts._timelines.global,
+			value: 'global', label: i18n.ts._timelines.global,
 		}],
+		default: props.column.tl,
 	});
 	if (canceled) {
 		if (props.column.tl == null) {
@@ -140,10 +147,6 @@ async function setType() {
 	updateColumn(props.column.id, {
 		tl: src ?? undefined,
 	});
-}
-
-function onNote() {
-	sound.playMisskeySfxFile(soundSetting.value);
 }
 
 const menu = computed<MenuItem[]>(() => {

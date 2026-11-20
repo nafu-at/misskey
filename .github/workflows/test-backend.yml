@@ -23,6 +23,7 @@ on:
       - pnpm-lock.yaml
       - .github/workflows/test-backend.yml
       - .github/misskey/test.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,14 +32,14 @@ jobs:
   unit:
     name: Unit tests (backend)
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
-        node-version: [22.x]
+        node-version-file:
+          - .node-version
 
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18
         ports:
           - 54312:5432
         env:
@@ -52,38 +53,27 @@ jobs:
           DFLY_default_lua_flags: allow-undeclared-keys
         ports:
           - 56312:6379
+      meilisearch:
+        image: getmeili/meilisearch:v1.49.0
+        ports:
+          - 57712:7700
+        env:
+          MEILI_NO_ANALYTICS: true
+          MEILI_ENV: development
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7.0.0
       with:
-        fetch-depth: 0
         submodules: true
-    - name: Install pnpm
-      uses: pnpm/action-setup@v5
-      with:
-        run_install: false
-    - name: Restore FFmpeg binary cache
-      uses: actions/cache/restore@v5
-      with:
-        path: /opt/hostedtoolcache/ffmpeg
-        key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-latest
-        restore-keys: |
-          ffmpeg-${{ runner.os }}-${{ runner.arch }}-
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6.0.9
     - name: Install FFmpeg
-      uses: FedericoCarboni/setup-ffmpeg@v3
-      id: setup-ffmpeg
+      run: |
+        sudo apt install -y ffmpeg
+    - name: Use Node.js
+      uses: actions/setup-node@v7.0.0
       with:
-        ffmpeg-version: 7.0.2
-    - name: Save FFmpeg binary cache
-      if: steps.setup-ffmpeg.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v5
-      with:
-        path: /opt/hostedtoolcache/ffmpeg
-        key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-ffmpeg.outputs.ffmpeg-version }}
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v6
-      with:
-        node-version: ${{ matrix.node-version }}
+        node-version-file: ${{ matrix.node-version-file }}
         cache: 'pnpm'
     - run: pnpm i --frozen-lockfile
     - name: Check pnpm-lock.yaml
@@ -95,7 +85,7 @@ jobs:
     - name: Test
       run: pnpm --filter backend test-and-coverage
     - name: Upload to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./packages/backend/coverage/coverage-final.json
@@ -103,14 +93,15 @@ jobs:
   e2e:
     name: E2E tests (backend)
     runs-on: ubuntu-latest
-
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [22.x]
+        node-version-file:
+          - .node-version
 
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18
         ports:
           - 54312:5432
         env:
@@ -126,18 +117,15 @@ jobs:
           - 56312:6379
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.0
         with:
-          fetch-depth: 0
           submodules: true
-      - name: Install pnpm
-        uses: pnpm/action-setup@v5
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.0.9
+      - name: Use Node.js
+        uses: actions/setup-node@v7.0.0
         with:
-          run_install: false
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
+          node-version-file: ${{ matrix.node-version-file }}
           cache: 'pnpm'
       - run: pnpm i --frozen-lockfile
       - name: Check pnpm-lock.yaml
@@ -149,7 +137,50 @@ jobs:
       - name: Test
         run: pnpm --filter backend test-and-coverage:e2e
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./packages/backend/coverage/coverage-final.json
+
+  migration:
+    name: Migration tests (backend)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version-file:
+          - .node-version
+
+    services:
+      postgres:
+        image: postgres:18
+        ports:
+          - 54312:5432
+        env:
+          POSTGRES_DB: test-misskey
+          POSTGRES_HOST_AUTH_METHOD: trust
+
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          submodules: true
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.0.9
+      - name: Get current date
+        id: current-date
+        run: echo "today=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+      - name: Use Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: ${{ matrix.node-version-file }}
+          cache: 'pnpm'
+      - run: pnpm i --frozen-lockfile
+      - name: Check pnpm-lock.yaml
+        run: git diff --exit-code pnpm-lock.yaml
+      - name: Copy Configure
+        run: cp .github/misskey/test.yml .config
+      - name: Build
+        run: pnpm build
+      - name: Run migrations
+        run: MISSKEY_CONFIG_YML=test.yml pnpm --filter backend migrate
+      - name: Check no migrations are remaining
+        run: MISSKEY_CONFIG_YML=test.yml pnpm --filter backend check-migrations

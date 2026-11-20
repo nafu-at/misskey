@@ -3,44 +3,46 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Injectable } from '@nestjs/common';
-import { bindThis } from '@/decorators.js';
+import { Inject, Injectable, Scope } from '@nestjs/common';
 import type { Packed } from '@/misc/json-schema.js';
 import { MetaService } from '@/core/MetaService.js';
 import { NoteEntityService } from '@/core/entities/NoteEntityService.js';
 import { NoteStreamingHidingService } from '../NoteStreamingHidingService.js';
+import { bindThis } from '@/decorators.js';
 import { RoleService } from '@/core/RoleService.js';
 import { isRenotePacked, isQuotePacked } from '@/misc/is-renote.js';
 import type { JsonObject } from '@/misc/json-value.js';
-import Channel, { type MiChannelService } from '../channel.js';
+import Channel, { type ChannelRequest } from '../channel.js';
+import { REQUEST } from '@nestjs/core';
 
-class HybridTimelineChannel extends Channel {
+@Injectable({ scope: Scope.TRANSIENT })
+export class HybridTimelineChannel extends Channel {
 	public readonly chName = 'hybridTimeline';
-	public static readonly shouldShare = false;
-	public static readonly requireCredential = true as const;
-	public static readonly kind = 'read:account';
+	public static shouldShare = false;
+	public static requireCredential = true as const;
+	public static kind = 'read:account';
 	private withRenotes: boolean;
 	private withReplies: boolean;
 	private withFiles: boolean;
 	private minimize: boolean;
 
 	constructor(
+		@Inject(REQUEST)
+		request: ChannelRequest,
+
 		private metaService: MetaService,
 		private roleService: RoleService,
 		private noteEntityService: NoteEntityService,
 		private noteStreamingHidingService: NoteStreamingHidingService,
-		id: string,
-		connection: Channel['connection'],
-		dimension?: number | null,
 	) {
-		super(id, connection, dimension);
+		super(request);
 		//this.onNote = this.onNote.bind(this);
 	}
 
 	@bindThis
-	public async init(params: JsonObject): Promise<boolean> {
+	public async init(params: JsonObject): Promise<void> {
 		const policies = await this.roleService.getUserPolicies(this.user ? this.user.id : null);
-		if (!policies.ltlAvailable) return false;
+		if (!policies.ltlAvailable) return;
 
 		this.withRenotes = !!(params.withRenotes ?? true);
 		this.withReplies = !!(params.withReplies ?? false);
@@ -49,12 +51,11 @@ class HybridTimelineChannel extends Channel {
 
 		// Subscribe events
 		this.subscriber.on('notesStream', this.onNote);
-
-		return true;
 	}
 
 	@bindThis
-	private async onNote(note: Packed<'Note'>) {
+	private async onNote(sourceNote: Packed<'Note'>) {
+		let note = sourceNote;
 		const isMe = this.user!.id === note.userId;
 
 		// チャンネルの投稿ではなく、自分自身の投稿 または
@@ -73,12 +74,14 @@ class HybridTimelineChannel extends Channel {
 		if (this.withFiles && (note.files === undefined || note.files.length === 0)) return;
 
 		if (!this.isNoteVisibleForMe(note)) return;
-		if (this.isNoteMutedOrBlocked(note)) return;
 
 		if (note.reply) {
 			const reply = note.reply;
 			if ((this.following[note.userId]?.withReplies ?? false) || this.withReplies) {
-				if (!this.isNoteVisibleForMe(reply)) return;
+				// 自分のフォローしていないユーザーの visibility: followers な投稿への返信は弾く
+				if (reply.visibility === 'followers' && !Object.hasOwn(this.following, reply.userId) && reply.userId !== this.user!.id) return;
+				// 自分の見ることができないユーザーの visibility: specified な投稿への返信は弾く
+				if (reply.visibility === 'specified' && !reply.visibleUserIds!.includes(this.user!.id)) return;
 			} else {
 				// 「チャンネル接続主への返信」でもなければ、「チャンネル接続主が行った返信」でもなければ、「投稿者の投稿者自身への返信」でもない場合
 				if (reply.userId !== this.user!.id && !isMe && reply.userId !== note.userId) return;
@@ -90,7 +93,8 @@ class HybridTimelineChannel extends Channel {
 			if (!this.withRenotes) return;
 			if (note.renote.reply) {
 				const reply = note.renote.reply;
-				if (!this.isNoteVisibleForMe(reply)) return;
+				// 自分のフォローしていないユーザーの visibility: followers な投稿への返信のリノートは弾く
+				if (reply.visibility === 'followers' && !Object.hasOwn(this.following, reply.userId) && reply.userId !== this.user!.id) return;
 			}
 		}
 
@@ -98,39 +102,31 @@ class HybridTimelineChannel extends Channel {
 
 		if (!(await this.noteEntityService.isLanguageVisibleToMe(note, this.user?.id))) return;
 
-		const { shouldSkip } = await this.noteStreamingHidingService.processHiding(note, this.user?.id ?? null);
-		if (shouldSkip) return;
+		if (this.isNoteMutedOrBlocked(note)) return;
 
-		let noteToSend = note;
+		const filtered = await this.noteStreamingHidingService.filter(note, this.user?.id ?? null);
+		if (!filtered) return;
+		note = filtered;
+
 		if (this.user && isRenotePacked(note) && !isQuotePacked(note)) {
-			if (note.renote?.reactions && Object.keys(note.renote.reactions).length > 0) {
+			if (note.renote && Object.keys(note.renote.reactions).length > 0) {
 				const myRenoteReaction = await this.noteEntityService.populateMyReaction(note.renote, this.user.id);
-				noteToSend = {
-					...note,
-					renote: {
-						...note.renote,
-						myReaction: myRenoteReaction,
-					},
-				};
+				note = { ...note, renote: { ...note.renote, myReaction: myRenoteReaction } };
 			}
 		}
 
-		if (this.user && (note.visibleUserIds?.includes(this.user.id) ?? note.mentions?.includes(this.user.id))) {
-			this.connection.cacheNote(note);
-		}
-
-		if (this.minimize && ['public', 'home'].includes(note.visibility)) {
+		if (this.minimize && this.canUseNoteJsonCache(note)) {
 			const badgeRoles = this.iAmModerator ? await this.roleService.getUserBadgeRoles(note.userId, false) : undefined;
 
 			this.send('note', {
-				id: noteToSend.id, myReaction: noteToSend.myReaction,
-				poll: noteToSend.poll?.choices ? { choices: noteToSend.poll.choices } : undefined,
-				reply: noteToSend.reply?.myReaction ? { myReaction: noteToSend.reply.myReaction } : undefined,
-				renote: noteToSend.renote?.myReaction ? { myReaction: noteToSend.renote.myReaction } : undefined,
+				id: note.id, myReaction: note.myReaction,
+				poll: note.poll?.choices ? { choices: note.poll.choices } : undefined,
+				reply: note.reply?.myReaction ? { myReaction: note.reply.myReaction } : undefined,
+				renote: note.renote?.myReaction ? { myReaction: note.renote.myReaction } : undefined,
 				...(badgeRoles?.length ? { user: { badgeRoles } } : {}),
 			});
 		} else {
-			this.send('note', noteToSend);
+			this.send('note', note);
 		}
 	}
 
@@ -138,33 +134,5 @@ class HybridTimelineChannel extends Channel {
 	public dispose(): void {
 		// Unsubscribe events
 		this.subscriber.off('notesStream', this.onNote);
-	}
-}
-
-@Injectable()
-export class HybridTimelineChannelService implements MiChannelService<true> {
-	public readonly shouldShare = HybridTimelineChannel.shouldShare;
-	public readonly requireCredential = HybridTimelineChannel.requireCredential;
-	public readonly kind = HybridTimelineChannel.kind;
-
-	constructor(
-		private metaService: MetaService,
-		private roleService: RoleService,
-		private noteEntityService: NoteEntityService,
-		private noteStreamingHidingService: NoteStreamingHidingService,
-	) {
-	}
-
-	@bindThis
-	public create(id: string, connection: Channel['connection'], dimension?: number | null): HybridTimelineChannel {
-		return new HybridTimelineChannel(
-			this.metaService,
-			this.roleService,
-			this.noteEntityService,
-			this.noteStreamingHidingService,
-			id,
-			connection,
-			dimension,
-		);
 	}
 }

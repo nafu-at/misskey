@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { ref, defineAsyncComponent } from 'vue';
+import { ref } from 'vue';
 import { compareVersions } from 'compare-versions';
+import { isSafeMode } from '@@/js/config.js';
 import * as Misskey from 'misskey-js';
 import type { Parser, Interpreter, values, utils as utils_TypeReferenceOnly } from '@syuilo/aiscript';
 import type { FormWithDefault } from '@/utility/form.js';
@@ -25,7 +26,7 @@ export type Plugin = {
 	version: string;
 	author?: string;
 	description?: string;
-	permissions?: string[];
+	permissions?: (typeof Misskey.permissions)[number][];
 };
 
 export type AiScriptPluginMeta = {
@@ -33,7 +34,7 @@ export type AiScriptPluginMeta = {
 	version: string;
 	author: string;
 	description?: string;
-	permissions?: string[];
+	permissions?: (typeof Misskey.permissions)[number][];
 	config?: Record<string, any>;
 };
 
@@ -48,7 +49,7 @@ async function getParser(): Promise<Parser> {
 export function isSupportedAiScriptVersion(version: string): boolean {
 	try {
 		return (compareVersions(version, '0.12.0') >= 0);
-	} catch (err) {
+	} catch (_) {
 		return false;
 	}
 }
@@ -67,14 +68,13 @@ export async function parsePluginMeta(code: string): Promise<AiScriptPluginMeta>
 		throw new Error(`Aiscript version '${lv}' is not supported`);
 	}
 
-	const ast = await (async () => {
-		try {
-			const parser = await getParser();
-			return parser.parse(code);
-		} catch (err) {
-			throw new Error('Aiscript syntax error', { cause: err });
-		}
-	})();
+	let ast;
+	try {
+		const parser = await getParser();
+		ast = parser.parse(code);
+	} catch (_) {
+		throw new Error('Aiscript syntax error');
+	}
 
 	const meta = Interpreter.collectMetadata(ast);
 	if (meta == null) {
@@ -97,7 +97,7 @@ export async function parsePluginMeta(code: string): Promise<AiScriptPluginMeta>
 		version: version as string,
 		author: author as string,
 		description: description as string | undefined,
-		permissions: permissions as string[] | undefined,
+		permissions: permissions as (typeof Misskey.permissions)[number][] | undefined,
 		config: config as Record<string, any> | undefined,
 	};
 }
@@ -106,8 +106,9 @@ export async function authorizePlugin(plugin: Plugin) {
 	if (plugin.permissions == null || plugin.permissions.length === 0) return;
 	if (Object.hasOwn(store.s.pluginTokens, plugin.installId)) return;
 
-	const token = await new Promise<string>((res) => {
-		void os.popup(defineAsyncComponent(() => import('@/components/MkTokenGenerateWindow.vue')), {
+	const token = await new Promise<string>((res, rej) => {
+		let dispose: () => void;
+		os.popupAsyncWithDialog(import('@/components/MkTokenGenerateWindow.vue').then(x => x.default), {
 			title: i18n.ts.tokenRequested,
 			information: i18n.ts.pluginTokenRequestedDescription,
 			initialName: plugin.name,
@@ -122,7 +123,8 @@ export async function authorizePlugin(plugin: Plugin) {
 				});
 				res(token);
 			},
-		}, 'closed');
+			closed: () => dispose(),
+		}).then(d => dispose = d.dispose, err => rej(err));
 	});
 
 	store.set('pluginTokens', {
@@ -244,6 +246,7 @@ export function launchPlugins() {
 }
 
 async function launchPlugin(id: Plugin['installId']): Promise<void> {
+	if (isSafeMode) return;
 	const plugin = prefer.s.plugins.find(x => x.installId === id);
 	if (!plugin) return;
 

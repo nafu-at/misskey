@@ -4,7 +4,6 @@
  */
 
 import { Inject, Injectable } from '@nestjs/common';
-import { In } from 'typeorm';
 import { DI } from '@/di-symbols.js';
 import { type Config, FulltextSearchProvider } from '@/config.js';
 import { bindThis } from '@/decorators.js';
@@ -18,7 +17,7 @@ import { QueryService } from '@/core/QueryService.js';
 import { IdService } from '@/core/IdService.js';
 import type Logger from '@/logger.js';
 import { LoggerService } from '@/core/LoggerService.js';
-import type { Index, MeiliSearch } from 'meilisearch';
+import type { Index, Meilisearch } from 'meilisearch';
 import type { Client as OpenSearch } from '@opensearch-project/opensearch';
 
 type K = string;
@@ -40,13 +39,13 @@ export type SearchOpts = {
 	userId?: MiNote['userId'] | null;
 	channelId?: MiNote['channelId'] | null;
 	host?: string | null;
+	rangeStartAt?: number | null;
+	rangeEndAt?: number | null;
 };
 
 export type SearchPagination = {
 	untilId?: MiNote['id'];
 	sinceId?: MiNote['id'];
-	sinceDate?: number;
-	untilDate?: number;
 	limit: number;
 };
 
@@ -91,7 +90,7 @@ export class SearchService {
 		private config: Config,
 
 		@Inject(DI.meilisearch)
-		private meilisearch: MeiliSearch | null,
+		private meilisearch: Meilisearch | null,
 
 		@Inject(DI.opensearch)
 		private opensearch: OpenSearch | null,
@@ -276,7 +275,7 @@ export class SearchService {
 				return this.searchNoteByLike(q, me, opts, pagination);
 			}
 			case 'meilisearch': {
-				return this.searchNoteByMeiliSearch(q, me, opts, pagination);
+				return this.searchNoteByMeilisearch(q, me, opts, pagination);
 			}
 			case 'opensearch': {
 				return this.searchNoteByOpenSearch(q, me, opts, pagination);
@@ -307,8 +306,8 @@ export class SearchService {
 
 		if (pagination.untilId) esFilter.bool.must.push({ range: { createdAt: { lt: this.idService.parse(pagination.untilId).date.getTime() } } });
 		if (pagination.sinceId) esFilter.bool.must.push({ range: { createdAt: { gt: this.idService.parse(pagination.sinceId).date.getTime() } } });
-		if (pagination.untilDate) esFilter.bool.must.push({ range: { createdAt: { lt: pagination.untilDate } } });
-		if (pagination.sinceDate) esFilter.bool.must.push({ range: { createdAt: { gt: pagination.sinceDate } } });
+		if (opts.rangeStartAt != null) esFilter.bool.must.push({ range: { createdAt: { gte: opts.rangeStartAt } } });
+		if (opts.rangeEndAt != null) esFilter.bool.must.push({ range: { createdAt: { lte: opts.rangeEndAt } } });
 		if (opts.userId) esFilter.bool.must.push({ term: { userId: opts.userId } });
 		if (opts.channelId) esFilter.bool.must.push({ term: { channelId: opts.channelId } });
 		if (opts.host) {
@@ -357,9 +356,19 @@ export class SearchService {
 			this.cacheService.userMutingsCache.fetch(me.id),
 			this.cacheService.userBlockedCache.fetch(me.id),
 		]) : [new Set<string>(), new Set<string>()];
-		const notes = (await this.notesRepository.findBy({
-			id: In(noteIds),
-		})).filter(note => {
+		const query = this.notesRepository.createQueryBuilder('note')
+			.innerJoinAndSelect('note.user', 'user')
+			.leftJoinAndSelect('note.reply', 'reply')
+			.leftJoinAndSelect('note.renote', 'renote')
+			.leftJoinAndSelect('reply.user', 'replyUser')
+			.leftJoinAndSelect('renote.user', 'renoteUser');
+
+		query.where('note.id IN (:...noteIds)', { noteIds });
+		query.andWhere('note.visibility IN (:...searchableVisibilities)', { searchableVisibilities: ['public', 'home'] });
+
+		this.queryService.generateBaseNoteFilteringQuery(query, me);
+
+		const notes = (await query.getMany()).filter(note => {
 			if (me && isUserRelated(note, userIdsWhoBlockingMe)) return false;
 			if (me && isUserRelated(note, userIdsWhoMeMuting)) return false;
 			return true;
@@ -376,13 +385,6 @@ export class SearchService {
 		pagination: SearchPagination,
 	): Promise<MiNote[]> {
 		const query = this.queryService.makePaginationQuery(this.notesRepository.createQueryBuilder('note'), pagination.sinceId, pagination.untilId);
-
-		if (pagination.sinceDate) {
-			query.andWhere('note.id > :sinceDate', { sinceDate: this.idService.gen(pagination.sinceDate) });
-		}
-		if (pagination.untilDate) {
-			query.andWhere('note.id < :untilDate', { untilDate: this.idService.gen(pagination.untilDate) });
-		}
 
 		if (opts.userId) {
 			query.andWhere('note.userId = :userId', { userId: opts.userId });
@@ -405,29 +407,37 @@ export class SearchService {
 
 		if (opts.host) {
 			if (opts.host === '.') {
-				query.andWhere('user.host IS NULL');
+				query.andWhere('note.userHost IS NULL');
 			} else {
-				query.andWhere('user.host = :host', { host: opts.host });
+				query.andWhere('note.userHost = :host', { host: opts.host });
 			}
 		}
 
+		if (opts.rangeStartAt != null) {
+			const date = this.idService.gen(opts.rangeStartAt - 1);
+			query.andWhere('note.id > :rangeStartAt', { rangeStartAt: date });
+		}
+
+		if (opts.rangeEndAt != null) {
+			const date = this.idService.gen(opts.rangeEndAt + 1);
+			query.andWhere('note.id < :rangeEndAt', { rangeEndAt: date });
+		}
+
 		this.queryService.generateVisibilityQuery(query, me);
-		this.queryService.generateBlockedHostQueryForNote(query);
-		if (me) this.queryService.generateMutedUserQueryForNotes(query, me);
-		if (me) this.queryService.generateBlockedUserQueryForNotes(query, me);
+		this.queryService.generateBaseNoteFilteringQuery(query, me);
 
 		return query.limit(pagination.limit).getMany();
 	}
 
 	@bindThis
-	private async searchNoteByMeiliSearch(
+	private async searchNoteByMeilisearch(
 		q: string,
 		me: MiUser | null,
 		opts: SearchOpts,
 		pagination: SearchPagination,
 	): Promise<MiNote[]> {
 		if (!this.meilisearch || !this.meilisearchNoteIndex) {
-			throw new Error('MeiliSearch is not available');
+			throw new Error('Meilisearch is not available');
 		}
 
 		const filter: Q = {
@@ -439,20 +449,20 @@ export class SearchService {
 			k: 'createdAt',
 			v: this.idService.parse(pagination.untilId).date.getTime(),
 		});
+		if (opts.rangeEndAt) filter.qs.push({
+			op: '<=',
+			k: 'createdAt',
+			v: opts.rangeEndAt,
+		});
 		if (pagination.sinceId) filter.qs.push({
 			op: '>',
 			k: 'createdAt',
 			v: this.idService.parse(pagination.sinceId).date.getTime(),
 		});
-		if (pagination.untilDate) filter.qs.push({
-			op: '<',
+		if (opts.rangeStartAt) filter.qs.push({
+			op: '>=',
 			k: 'createdAt',
-			v: pagination.untilDate,
-		});
-		if (pagination.sinceDate) filter.qs.push({
-			op: '>',
-			k: 'createdAt',
-			v: pagination.sinceDate,
+			v: opts.rangeStartAt,
 		});
 		if (opts.userId) filter.qs.push({ op: '=', k: 'userId', v: opts.userId });
 		if (opts.channelId) filter.qs.push({ op: '=', k: 'channelId', v: opts.channelId });
@@ -484,9 +494,19 @@ export class SearchService {
 				this.cacheService.userBlockedCache.fetch(me.id),
 			]) : [new Set<string>(), new Set<string>()];
 
-		const notes = (await this.notesRepository.findBy({
-			id: In(res.hits.map(x => x.id)),
-		})).filter(note => {
+		const query = this.notesRepository.createQueryBuilder('note')
+			.innerJoinAndSelect('note.user', 'user')
+			.leftJoinAndSelect('note.reply', 'reply')
+			.leftJoinAndSelect('note.renote', 'renote')
+			.leftJoinAndSelect('reply.user', 'replyUser')
+			.leftJoinAndSelect('renote.user', 'renoteUser');
+
+		query.where('note.id IN (:...noteIds)', { noteIds: res.hits.map(x => x.id) });
+
+		this.queryService.generateBlockedHostQueryForNote(query);
+		this.queryService.generateSuspendedUserQueryForNote(query);
+
+		const notes = (await query.getMany()).filter(note => {
 			if (me && isUserRelated(note, userIdsWhoBlockingMe)) return false;
 			if (me && isUserRelated(note, userIdsWhoMeMuting)) return false;
 			return true;

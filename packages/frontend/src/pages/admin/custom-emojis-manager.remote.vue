@@ -159,7 +159,7 @@ import * as os from '@/os.js';
 import { deviceKind } from '@/utility/device-kind.js';
 import MkPagingButtons from '@/components/MkPagingButtons.vue';
 import MkSortOrderEditor from '@/components/MkSortOrderEditor.vue';
-import { useLoading } from '@/components/hook/useLoading.js';
+import { useLoading } from '@/composables/use-loading.js';
 
 type GridItem = {
 	checked: boolean;
@@ -299,7 +299,7 @@ function onGridEvent(event: GridEvent) {
 function onGridCellValueChange(event: GridCellValueChangeEvent) {
 	const { row, column, newValue } = event;
 	if (gridItems.value.length > row.index && column.setting.bindTo in gridItems.value[row.index]) {
-		gridItems.value[row.index][column.setting.bindTo] = newValue;
+		(gridItems.value[row.index] as any)[column.setting.bindTo] = newValue;
 	}
 }
 
@@ -412,7 +412,7 @@ onMounted(async () => {
 }
 
 .changedRow {
-	background-color: var(--MI_THEME-infoBg);
+	background-color: var(--MI_THEME-infoBg) !important;
 }
 
 .searchArea {

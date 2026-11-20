@@ -49,9 +49,16 @@ export const packedFlashSchema = {
 			optional: false, nullable: false,
 			enum: ['private', 'public'],
 		},
+		permissions: {
+			type: 'array',
+			optional: false, nullable: false,
+			items: {
+				type: 'string',
+			},
+		},
 		likedCount: {
 			type: 'number',
-			optional: false, nullable: true,
+			optional: false, nullable: false,
 		},
 		isLiked: {
 			type: 'boolean',

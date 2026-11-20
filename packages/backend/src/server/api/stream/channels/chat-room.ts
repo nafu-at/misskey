@@ -3,16 +3,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Scope } from '@nestjs/common';
 import { DI } from '@/di-symbols.js';
 import { bindThis } from '@/decorators.js';
 import type { GlobalEvents } from '@/core/GlobalEventService.js';
 import type { JsonObject } from '@/misc/json-value.js';
 import { ChatService } from '@/core/ChatService.js';
+import Channel, { type ChannelRequest } from '../channel.js';
+import { REQUEST } from '@nestjs/core';
 import type { ChatRoomsRepository } from '@/models/_.js';
-import Channel, { type MiChannelService } from '../channel.js';
 
-class ChatRoomChannel extends Channel {
+@Injectable({ scope: Scope.TRANSIENT })
+export class ChatRoomChannel extends Channel {
 	public readonly chName = 'chatRoom';
 	public static shouldShare = false;
 	public static requireCredential = true as const;
@@ -20,13 +22,15 @@ class ChatRoomChannel extends Channel {
 	private roomId: string;
 
 	constructor(
-		private readonly chatRoomsRepository: ChatRoomsRepository,
-		private readonly chatService: ChatService,
+		@Inject(REQUEST)
+		request: ChannelRequest,
 
-		id: string,
-		connection: Channel['connection'],
+		@Inject(DI.chatRoomsRepository)
+		private chatRoomsRepository: ChatRoomsRepository,
+
+		private chatService: ChatService,
 	) {
-		super(id, connection, null);
+		super(request);
 	}
 
 	@bindThis
@@ -67,30 +71,5 @@ class ChatRoomChannel extends Channel {
 	@bindThis
 	public dispose() {
 		this.subscriber.off(`chatRoomStream:${this.roomId}`, this.onEvent);
-	}
-}
-
-@Injectable()
-export class ChatRoomChannelService implements MiChannelService<true> {
-	public readonly shouldShare = ChatRoomChannel.shouldShare;
-	public readonly requireCredential = ChatRoomChannel.requireCredential;
-	public readonly kind = ChatRoomChannel.kind;
-
-	constructor(
-		@Inject(DI.chatRoomsRepository)
-		private readonly chatRoomsRepository: ChatRoomsRepository,
-
-		private readonly chatService: ChatService,
-	) {
-	}
-
-	@bindThis
-	public create(id: string, connection: Channel['connection'], dimension?: number | null): ChatRoomChannel {
-		return new ChatRoomChannel(
-			this.chatRoomsRepository,
-			this.chatService,
-			id,
-			connection,
-		);
 	}
 }

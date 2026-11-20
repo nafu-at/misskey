@@ -7,7 +7,7 @@ import process from 'node:process';
 import { Global, Inject, Module } from '@nestjs/common';
 import * as Redis from 'ioredis';
 import { DataSource } from 'typeorm';
-import { MeiliSearch } from 'meilisearch';
+import { Meilisearch } from 'meilisearch';
 import { Client as OpenSearch } from '@opensearch-project/opensearch';
 import { MiMeta } from '@/models/Meta.js';
 import { DI } from './di-symbols.js';
@@ -26,8 +26,13 @@ const $config: Provider = {
 const $db: Provider = {
 	provide: DI.db,
 	useFactory: async (config) => {
-		const db = createPostgresDataSource(config);
-		return await db.initialize();
+		try {
+			const db = createPostgresDataSource(config);
+			return await db.initialize();
+		} catch (e) {
+			console.log(e);
+			throw e;
+		}
 	},
 	inject: [DI.config],
 };
@@ -37,10 +42,10 @@ const $meilisearch: Provider = {
 	useFactory: (config: Config) => {
 		if (config.fulltextSearch?.provider === 'meilisearch') {
 			if (!config.meilisearch) {
-				throw new Error('MeiliSearch is enabled but no configuration is provided');
+				throw new Error('Meilisearch is enabled but no configuration is provided');
 			}
 
-			return new MeiliSearch({
+			return new Meilisearch({
 				host: `${config.meilisearch.ssl ? 'https' : 'http'}://${config.meilisearch.host}:${config.meilisearch.port}`,
 				apiKey: config.meilisearch.apiKey,
 			});
@@ -313,8 +318,9 @@ export class GlobalModule implements OnApplicationShutdown {
 		]);
 	}
 
-	async onApplicationShutdown(signal: string): Promise<void> {
+	async onApplicationShutdown(signal?: string): Promise<void> {
 		await this.dispose();
+		if (signal == null) return;
 		process.emitWarning('Misskey is shutting down', {
 			code: 'MISSKEY_SHUTDOWN',
 			detail: `Application received ${signal} signal`,

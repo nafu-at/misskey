@@ -8,19 +8,20 @@ SPDX-License-Identifier: AGPL-3.0-only
 	ref="modal"
 	:preferType="'dialog'"
 	:hasInteractionWithOtherFocusTrappedEls="true"
-	@click="modal?.close()"
+	@click="onBgClick()"
 	@closed="onModalClosed()"
-	@esc="modal?.close()"
+	@esc="onEsc"
 >
 	<MkPostForm
 		ref="form"
 		:class="$style.form"
+		class="_popup"
 		v-bind="props"
 		autofocus
 		freezeAfterPosted
 		@posting="onPosting" @postError="onPostError"
-		@cancel="modal?.close()"
-		@esc="modal?.close()"
+		@cancel="_close()"
+		@esc="_close()"
 	/>
 </MkModal>
 </template>
@@ -45,6 +46,7 @@ const emit = defineEmits<{
 }>();
 
 const modal = useTemplateRef('modal');
+const form = useTemplateRef('form');
 
 function onPosting() {
 	modal.value?.close({
@@ -53,7 +55,22 @@ function onPosting() {
 }
 
 function onPostError() {
-	os.post();
+	os.post(props);
+}
+
+async function _close() {
+	const canClose = await form.value?.canClose();
+	if (!canClose) return;
+	form.value?.abortUploader();
+	modal.value?.close();
+}
+
+function onEsc() {
+	_close();
+}
+
+function onBgClick() {
+	_close();
 }
 
 function onModalClosed() {
@@ -63,7 +80,8 @@ function onModalClosed() {
 
 <style lang="scss" module>
 .form {
-	max-height: 100%;
+	width: 100%;
+	max-width: 520px;
 	margin: 0 auto auto auto;
 }
 </style>

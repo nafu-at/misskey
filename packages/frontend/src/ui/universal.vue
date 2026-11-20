@@ -8,11 +8,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 	<XTitlebar v-if="prefer.r.showTitlebar.value" style="flex-shrink: 0;"/>
 
 	<div :class="$style.nonTitlebarArea">
-		<XSidebar v-if="!isMobile" :class="$style.sidebar" :showWidgetButton="!isDesktop" @widgetButtonClick="widgetsShowing = true"/>
+		<XSidebar v-if="!isMobile" :class="$style.sidebar" :showWidgetButton="!showWidgetsSide" @widgetButtonClick="widgetsShowing = true"/>
 
 		<div :class="[$style.contents, !isMobile && prefer.r.showTitlebar.value ? $style.withSidebarAndTitlebar : null]" @contextmenu.stop="onContextmenu">
 			<div>
+				<XReloadSuggestion v-if="shouldSuggestReload"/>
 				<XPreferenceRestore v-if="shouldSuggestRestoreBackup"/>
+				<XThemePreviewing v-if="isThemePreviewMode"/>
 				<XAnnouncements v-if="$i"/>
 				<XStatusBars :class="$style.statusbars"/>
 			</div>
@@ -21,7 +23,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 			<XMobileFooterMenu v-if="isMobile" ref="navFooter" v-model:drawerMenuShowing="drawerMenuShowing" v-model:widgetsShowing="widgetsShowing"/>
 		</div>
 
-		<div v-if="isDesktop && !pageMetadata?.needWideArea" :class="$style.widgets">
+		<div v-if="showWidgetsSide && !pageMetadata?.needWideArea" :class="$style.widgets">
 			<XWidgets/>
 		</div>
 	</div>
@@ -38,7 +40,11 @@ import XCommon from './_common_/common.vue';
 import type { PageMetadata } from '@/page.js';
 import XMobileFooterMenu from '@/ui/_common_/mobile-footer-menu.vue';
 import XPreferenceRestore from '@/ui/_common_/PreferenceRestore.vue';
+import XReloadSuggestion from '@/ui/_common_/ReloadSuggestion.vue';
+import XThemePreviewing from '@/ui/_common_/ThemePreviewing.vue';
 import XTitlebar from '@/ui/_common_/titlebar.vue';
+import XSidebar from '@/ui/_common_/navbar.vue';
+import { isPreviewMode as isThemePreviewMode } from '@/theme.js';
 import * as os from '@/os.js';
 import { i18n } from '@/i18n.js';
 import { $i } from '@/i.js';
@@ -49,9 +55,9 @@ import { mainRouter } from '@/router.js';
 import { prefer } from '@/preferences.js';
 import { shouldSuggestRestoreBackup } from '@/preferences/utility.js';
 import { DI } from '@/di.js';
+import { shouldSuggestReload } from '@/utility/reload-suggest.js';
 
 const XWidgets = defineAsyncComponent(() => import('./_common_/widgets.vue'));
-const XSidebar = defineAsyncComponent(() => import('@/ui/_common_/navbar.vue'));
 const XStatusBars = defineAsyncComponent(() => import('@/ui/_common_/statusbars.vue'));
 const XAnnouncements = defineAsyncComponent(() => import('@/ui/_common_/announcements.vue'));
 
@@ -61,7 +67,8 @@ const DESKTOP_THRESHOLD = 1100;
 const MOBILE_THRESHOLD = 500;
 
 // デスクトップでウィンドウを狭くしたときモバイルUIが表示されて欲しいことはあるので deviceKind === 'desktop' の判定は行わない
-const isDesktop = ref(window.innerWidth >= DESKTOP_THRESHOLD);
+const showWidgetsSide = window.innerWidth >= DESKTOP_THRESHOLD;
+
 const isMobile = ref(deviceKind === 'smartphone' || window.innerWidth <= MOBILE_THRESHOLD);
 window.addEventListener('resize', () => {
 	isMobile.value = deviceKind === 'smartphone' || window.innerWidth <= MOBILE_THRESHOLD;
@@ -99,14 +106,6 @@ if (window.innerWidth > 1024) {
 	}
 }
 
-onMounted(() => {
-	if (!isDesktop.value) {
-		window.addEventListener('resize', () => {
-			if (window.innerWidth >= DESKTOP_THRESHOLD) isDesktop.value = true;
-		}, { passive: true });
-	}
-});
-
 const onContextmenu = (ev) => {
 	if (isLink(ev.target)) return;
 	if (['INPUT', 'TEXTAREA', 'IMG', 'VIDEO', 'CANVAS'].includes(ev.target.tagName) || (ev.target.isContentEditable)) return;
@@ -126,7 +125,6 @@ const onContextmenu = (ev) => {
 </script>
 
 <style lang="scss" module>
-$ui-font-size: 1em; // TODO: どこかに集約したい
 $widgets-hide-threshold: 1090px;
 
 .root {

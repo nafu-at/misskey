@@ -7,11 +7,11 @@ import { defineAsyncComponent, ref } from 'vue';
 import * as Misskey from 'misskey-js';
 import { apiUrl, host } from '@@/js/config.js';
 import { generateClientTransactionId, misskeyApi } from '@/utility/misskey-api.js';
-import type { MenuButton, MenuItem, MenuUser } from '@/types/menu.js';
+import type { MenuItem } from '@/types/menu.js';
 import { showSuspendedDialog } from '@/utility/show-suspended-dialog.js';
 import { i18n } from '@/i18n.js';
 import { miLocalStorage } from '@/local-storage.js';
-import { popup, popupMenu, success, alert } from '@/os.js';
+import { popup, success, alert } from '@/os.js';
 import { unisonReload, reloadChannel } from '@/utility/unison-reload.js';
 import { prefer } from '@/preferences.js';
 import { store } from '@/store.js';
@@ -23,7 +23,7 @@ export async function getAccounts(): Promise<{
 	host: string;
 	id: Misskey.entities.User['id'];
 	username: Misskey.entities.User['username'];
-	user?: Misskey.entities.User | null;
+	user?: Misskey.entities.MeDetailed | null;
 	token: string | null;
 }[]> {
 	const tokens = store.s.accountTokens;
@@ -38,7 +38,7 @@ export async function getAccounts(): Promise<{
 	}));
 }
 
-async function addAccount(host: string, user: Misskey.entities.User, token: AccountWithToken['token']) {
+async function addAccount(host: string, user: Misskey.entities.MeDetailed, token: AccountWithToken['token']) {
 	const key = host + '/' + user.id;
 	store.set('accountTokens', { ...store.s.accountTokens, [key]: token });
 	store.set('accountInfos', { ...store.s.accountInfos, [key]: user });
@@ -141,10 +141,10 @@ export function updateCurrentAccount(accountData: Misskey.entities.MeDetailed) {
 	if (!$i) return;
 	const token = $i.token;
 	for (const key of Object.keys($i)) {
-		delete $i[key];
+		delete $i[key as keyof typeof $i];
 	}
 	for (const [key, value] of Object.entries(accountData)) {
-		$i[key] = value;
+		($i[key as keyof typeof accountData] as any) = value;
 	}
 	store.set('accountInfos', { ...store.s.accountInfos, [host + '/' + $i.id]: $i });
 	$i.token = token;
@@ -154,7 +154,7 @@ export function updateCurrentAccount(accountData: Misskey.entities.MeDetailed) {
 export function updateCurrentAccountPartial(accountData: Partial<Misskey.entities.MeDetailed>) {
 	if (!$i) return;
 	for (const [key, value] of Object.entries(accountData)) {
-		$i[key] = value;
+		($i[key as keyof typeof accountData] as any) = value;
 	}
 
 	store.set('accountInfos', { ...store.s.accountInfos, [host + '/' + $i.id]: $i });
@@ -209,12 +209,14 @@ export async function login(token: AccountWithToken['token'], redirect?: string)
 	unisonReload();
 }
 
-export async function switchAccount(host: string, id: string) {
+export async function switchAccount(host: string, id: string, initialUsername?: string) {
 	const token = store.s.accountTokens[host + '/' + id];
 	if (token) {
 		login(token);
 	} else {
-		await popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {}, {
+		await popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {
+			initialUsername,
+		}, {
 			done: async (res: Misskey.entities.SigninFlowResponse & { finished: true }) => {
 				login(res.i);
 			},
@@ -222,79 +224,80 @@ export async function switchAccount(host: string, id: string) {
 	}
 }
 
-export async function openAccountMenu(opts: {
+export async function getAccountMenu(opts: {
 	includeCurrentAccount?: boolean;
 	withExtraOperation: boolean;
 	active?: Misskey.entities.User['id'];
-	onChoose?: (account: Misskey.entities.User) => void;
-}, ev: MouseEvent) {
-	if (!$i) return;
+	onChoose?: (account: Misskey.entities.MeDetailed) => void;
+}) {
+	if ($i == null) throw new Error('No current account');
+	const me = $i;
 
-	async function switchAccountByUser(account: Misskey.entities.User) {
-		const storedAccounts = await getAccounts();
-		const found = storedAccounts.find(x => x.id === account.id);
-		if (found?.token) {
-			login(found.token);
-			return;
+	const callback = opts.onChoose;
+
+	function createItem(accountHost: string, id: Misskey.entities.User['id'], username: Misskey.entities.User['username'], account: Misskey.entities.MeDetailed | null | undefined, token: string | null): MenuItem {
+		if (account) {
+			return {
+				type: 'user',
+				user: account,
+				active: opts.active != null ? opts.active === id : false,
+				action: () => {
+					if (callback) {
+						callback(account);
+					} else {
+						switchAccount(accountHost, id, username);
+					}
+				},
+			};
+		} else if (token != null) {
+			return {
+				type: 'button',
+				text: username,
+				active: opts.active != null ? opts.active === id : false,
+				action: () => {
+					if (callback) {
+						fetchAccount(token, id).then(callback);
+					} else {
+						switchAccount(accountHost, id, username);
+					}
+				},
+			};
+		} else {
+			return {
+				type: 'button',
+				text: username,
+				active: opts.active != null ? opts.active === id : false,
+				action: () => {
+					const { dispose } = popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {
+						initialUsername: username,
+					}, {
+						done: async (res: Misskey.entities.SigninFlowResponse & { finished: true }) => {
+							store.set('accountTokens', { ...store.s.accountTokens, [accountHost + '/' + res.id]: res.i });
+
+							if (callback) {
+								fetchAccount(res.i, id).then(callback);
+							} else {
+								login(res.i);
+							}
+						},
+						closed: () => dispose(),
+					});
+				},
+			};
 		}
-		if (found) {
-			await switchAccount(found.host, found.id);
-		}
 	}
 
-	function switchAccountWithToken(token: string) {
-		login(token);
-	}
-
-	const storedAccounts = await getAccounts().then(accounts => accounts.filter(x => x.id !== $i.id));
-	const accountsPromise = storedAccounts.length > 0
-		? misskeyApi('users/show', { userIds: storedAccounts.map(x => x.id) })
-		: Promise.resolve([] as Misskey.entities.User[]);
-
-	function createItem(account: Misskey.entities.User) {
-		return {
-			type: 'user' as const,
-			user: account,
-			active: opts.active != null ? opts.active === account.id : false,
-			action: () => {
-				if (opts.onChoose) {
-					opts.onChoose(account);
-				} else {
-					switchAccountByUser(account);
-				}
-			},
-		};
-	}
-
-	const accountItemPromises: MenuItem[] = storedAccounts.map(a => new Promise<MenuButton | MenuUser>(res => {
-		accountsPromise.then(accounts => {
-			const account = accounts.find(x => x.id === a.id);
-			if (account == null) {
-				return res({
-					type: 'button' as const,
-					text: a.username ?? a.id,
-					active: opts.active != null ? opts.active === a.id : false,
-					action: () => {
-						if (a.token) {
-							switchAccountWithToken(a.token);
-						} else {
-							switchAccount(a.host, a.id);
-						}
-					},
-				});
-			}
-
-			res(createItem(account));
-		});
-	}));
+	const accountItems = (await getAccounts())
+		.filter(account => account.id !== me.id)
+		.map(account => createItem(account.host, account.id, account.username, account.user, account.token));
 
 	if (opts.withExtraOperation) {
-		popupMenu([...[{
+		return [{
 			type: 'link' as const,
 			text: i18n.ts.profile,
 			to: `/@${$i.username}`,
 			avatar: $i,
-		}, { type: 'divider' as const }, ...(opts.includeCurrentAccount ? [createItem($i)] : []), ...accountItemPromises, {
+		}, { type: 'divider' as const }, ...(opts.includeCurrentAccount ? [createItem(host, $i.id, $i.username, $i, $i.token)] : []), ...accountItems, {
 			type: 'parent' as const,
 			icon: 'ti ti-plus',
 			text: i18n.ts.addAccount,
@@ -312,7 +315,7 @@ export async function openAccountMenu(opts: {
 				action: () => {
 					getAccountWithSignupDialog().then(res => {
 						if (res != null) {
-							switchAccountWithToken(res.token);
+							login(res.token);
 						}
 					});
 				},
@@ -322,19 +325,15 @@ export async function openAccountMenu(opts: {
 			icon: 'ti ti-users',
 			text: i18n.ts.manageAccounts,
 			to: '/settings/accounts',
-		}]], ev.currentTarget ?? ev.target, {
-			align: 'left',
-		});
-	} else {
-		popupMenu([...(opts.includeCurrentAccount ? [createItem($i)] : []), ...accountItemPromises], ev.currentTarget ?? ev.target, {
-			align: 'left',
-		});
+		}];
 	}
+
+	return [...(opts.includeCurrentAccount ? [createItem(host, $i.id, $i.username, $i, $i.token)] : []), ...accountItems];
 }
 
 export function getAccountWithSigninDialog(): Promise<{ id: string, token: string } | null> {
-	return new Promise(async (resolve) => {
-		await popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {}, {
+	return new Promise((resolve) => {
+		popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {}, {
 			done: async (res: Misskey.entities.SigninFlowResponse & { finished: true }) => {
 				const user = await fetchAccount(res.i, res.id, true);
 				await addAccount(host, user, res.i);
@@ -348,8 +347,8 @@ export function getAccountWithSigninDialog(): Promise<{ id: string, token: strin
 }
 
 export function getAccountWithSignupDialog(): Promise<{ id: string, token: string } | null> {
-	return new Promise(async (resolve) => {
-		await popup(defineAsyncComponent(() => import('@/components/MkSignupDialog.vue')), {}, {
+	return new Promise((resolve) => {
+		popup(defineAsyncComponent(() => import('@/components/MkSignupDialog.vue')), {}, {
 			done: async (res: Misskey.entities.SignupResponse) => {
 				const user = JSON.parse(JSON.stringify(res));
 				delete user.token;

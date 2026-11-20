@@ -7,8 +7,9 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import { Inject, Injectable } from '@nestjs/common';
 import sharp from 'sharp';
+import type { Sharp } from 'sharp';
 import { sharpBmp } from '@misskey-dev/sharp-read-bmp';
-import { IsNull } from 'typeorm';
+import { In, IsNull } from 'typeorm';
 import { DeleteObjectCommandInput, PutObjectCommandInput, NoSuchKey } from '@aws-sdk/client-s3';
 import { DI } from '@/di-symbols.js';
 import type { DriveFilesRepository, UsersRepository, DriveFoldersRepository, UserProfilesRepository, MiMeta } from '@/models/_.js';
@@ -308,7 +309,7 @@ export class DriveService {
 			};
 		}
 
-		let img: sharp.Sharp;
+		let img: Sharp | null = null;
 		let satisfyWebpublic: boolean;
 		let isAnimated: boolean;
 
@@ -321,8 +322,8 @@ export class DriveService {
 				type !== 'image/svg+xml' && // security reason
 				type !== 'image/avif' && // not supported by Mastodon and MS Edge
 			!(metadata.exif ?? metadata.iptc ?? metadata.xmp ?? metadata.tifftagPhotoshop) &&
-			metadata.width && metadata.width <= 4096 &&
-			metadata.height && metadata.height <= 4096
+			metadata.width && metadata.width <= 2048 &&
+			metadata.height && metadata.height <= 2048
 			);
 		} catch (err) {
 			this.registerLogger.warn(`sharp failed: ${err}`);
@@ -340,9 +341,9 @@ export class DriveService {
 
 			try {
 				if (['image/jpeg', 'image/webp', 'image/avif'].includes(type)) {
-					webpublic = await this.imageProcessingService.convertSharpToWebp(img, 4096, 4096);
+					webpublic = await this.imageProcessingService.convertSharpToWebp(img, 2048, 2048);
 				} else if (['image/png', 'image/bmp', 'image/svg+xml'].includes(type)) {
-					webpublic = await this.imageProcessingService.convertSharpToPng(img, 4096, 4096);
+					webpublic = await this.imageProcessingService.convertSharpToPng(img, 2048, 2048);
 				} else {
 					this.registerLogger.debug('web image not created (not an required image)');
 				}
@@ -481,13 +482,14 @@ export class DriveService {
 		skipNsfwCheck ||= !!(user && instance.sensitiveMediaDetection === 'remote' && this.userEntityService.isLocalUser(user));
 
 		const info = await this.fileInfoService.getFileInfo(path, {
+			fileName: name,
 			skipSensitiveDetection: skipNsfwCheck,
 			sensitiveThreshold: // 感度が高いほどしきい値は低くすることになる
-			instance.sensitiveMediaDetectionSensitivity === 'veryHigh' ? 0.1 :
-			instance.sensitiveMediaDetectionSensitivity === 'high' ? 0.3 :
-			instance.sensitiveMediaDetectionSensitivity === 'low' ? 0.7 :
-			instance.sensitiveMediaDetectionSensitivity === 'veryLow' ? 0.9 :
-			0.5,
+				instance.sensitiveMediaDetectionSensitivity === 'veryHigh' ? 0.1 :
+				instance.sensitiveMediaDetectionSensitivity === 'high' ? 0.3 :
+				instance.sensitiveMediaDetectionSensitivity === 'low' ? 0.7 :
+				instance.sensitiveMediaDetectionSensitivity === 'veryLow' ? 0.9 :
+				0.5,
 			sensitiveThresholdForPorn: 0.75,
 			enableSensitiveMediaDetectionForVideos: instance.enableSensitiveMediaDetectionForVideos,
 		});
@@ -527,28 +529,42 @@ export class DriveService {
 
 		this.registerLogger.debug(`ADD DRIVE FILE: user ${user?.id ?? 'not set'}, name ${detectedName}, tmp ${path}`);
 
-		//#region Check drive usage
+		//#region Check drive usage and mime type
 		if (user && policies && !isLink) {
-			const usage = await this.driveFileEntityService.calcDriveUsageOf(user);
 			const isLocalUser = this.userEntityService.isLocalUser(user);
-
-			const driveCapacity = 1024 * 1024 * policies.driveCapacityMb;
-			const maxFileSize = 1024 * 1024 * policies.maxFileSizeMb;
-			this.registerLogger.debug('drive capacity override applied');
-			this.registerLogger.debug(`overrideCap: ${driveCapacity}bytes, usage: ${usage}bytes, u+s: ${usage + info.size}bytes`);
-
-			if (maxFileSize < info.size) {
-				if (isLocalUser) {
-					throw new IdentifiableError('f9e4e5f3-4df4-40b5-b400-f236945f7073', 'Max file size exceeded.');
+			const isModerator = isLocalUser ? await this.roleService.isModerator(user) : false;
+			if (!isModerator) {
+				const allowedMimeTypes = policies.uploadableFileTypes;
+				const isAllowed = allowedMimeTypes.some((mimeType) => {
+					if (mimeType === '*' || mimeType === '*/*') return true;
+					if (mimeType.endsWith('/*')) return info.type.mime.startsWith(mimeType.slice(0, -1));
+					return info.type.mime === mimeType;
+				});
+				if (!isAllowed) {
+					throw new IdentifiableError('bd71c601-f9b0-4808-9137-a330647ced9b', `Unallowed file type: ${info.type.mime}`);
 				}
-			}
 
-			// If usage limit exceeded
-			if (driveCapacity < usage + info.size) {
-				if (isLocalUser) {
-					throw new IdentifiableError('c6244ed2-a39a-4e1c-bf93-f0fbd7764fa6', 'No free space in drive.');
+				const driveCapacity = 1024 * 1024 * policies.driveCapacityMb;
+				const maxFileSize = 1024 * 1024 * policies.maxFileSizeMb;
+
+				if (maxFileSize < info.size) {
+					if (isLocalUser) {
+						throw new IdentifiableError('f9e4e5f3-4df4-40b5-b400-f236945f7073', 'Max file size exceeded.');
+					}
 				}
-				await this.expireOldFile(await this.usersRepository.findOneByOrFail({ id: user.id }) as MiRemoteUser, driveCapacity - info.size);
+
+				const usage = await this.driveFileEntityService.calcDriveUsageOf(user);
+
+				this.registerLogger.debug('drive capacity override applied');
+				this.registerLogger.debug(`overrideCap: ${driveCapacity}bytes, usage: ${usage}bytes, u+s: ${usage + info.size}bytes`);
+
+				// If usage limit exceeded
+				if (driveCapacity < usage + info.size) {
+					if (isLocalUser) {
+						throw new IdentifiableError('c6244ed2-a39a-4e1c-bf93-f0fbd7764fa6', 'No free space in drive.');
+					}
+					await this.expireOldFile(await this.usersRepository.findOneByOrFail({ id: user.id }) as MiRemoteUser, driveCapacity - info.size);
+				}
 			}
 		}
 		//#endregion
@@ -743,6 +759,21 @@ export class DriveService {
 	}
 
 	@bindThis
+	public async moveFiles(fileIds: MiDriveFile['id'][], folderId: MiDriveFolder['id'] | null, userId: MiUser['id']) {
+		const folder = folderId ? await this.driveFoldersRepository.findOneByOrFail({
+			id: folderId,
+			userId: userId,
+		}) : null;
+
+		await this.driveFilesRepository.update({
+			id: In(fileIds),
+			userId: userId,
+		}, {
+			folderId: folder ? folder.id : null,
+		});
+	}
+
+	@bindThis
 	public async deleteFile(file: MiDriveFile, isExpired = false, deleter?: MiUser) {
 		if (file.storedInternal) {
 			this.internalStorageService.del(file.accessKey!);
@@ -797,14 +828,14 @@ export class DriveService {
 			await Promise.all(promises);
 		}
 
-		this.deletePostProcess(file, isExpired, deleter);
+		await this.deletePostProcess(file, isExpired, deleter);
 	}
 
 	@bindThis
 	private async deletePostProcess(file: MiDriveFile, isExpired = false, deleter?: MiUser) {
 		// リモートファイル期限切れ削除後は直リンクにする
 		if (isExpired && file.userHost !== null && file.uri != null) {
-			this.driveFilesRepository.update(file.id, {
+			await this.driveFilesRepository.update(file.id, {
 				isLink: true,
 				url: file.uri,
 				thumbnailUrl: null,
@@ -816,7 +847,7 @@ export class DriveService {
 				webpublicAccessKey: 'webpublic-' + randomUUID(),
 			});
 		} else {
-			this.driveFilesRepository.delete(file.id);
+			await this.driveFilesRepository.delete(file.id);
 		}
 
 		this.driveChart.update(file, false);

@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { defineAsyncComponent } from 'vue';
 import * as Misskey from 'misskey-js';
 import { url } from '@@/js/config.js';
 import { claimAchievement } from './achievements.js';
@@ -24,13 +23,16 @@ import { isSupportShare } from '@/utility/navigator.js';
 import { getAppearNote } from '@/utility/get-appear-note.js';
 import { prefer } from '@/preferences.js';
 import { getPluginHandlers } from '@/plugin.js';
-import { isMute, playUrl } from '@/utility/sound';
-import { isAprilFoolsDay } from '@/utility/seasonal-events';
+import { globalEvents } from '@/events.js';
+
+const isInBrowserTranslationAvailable = (
+	'LanguageDetector' in window &&
+	'Translator' in window
+);
 
 export async function getNoteClipMenu(props: {
 	note: Misskey.entities.Note;
-	isDeleted: Ref<boolean>;
-	currentClip?: Misskey.entities.Clip;
+	currentClip?: Misskey.entities.Clip | null;
 }) {
 	function getClipName(clip: Misskey.entities.Clip) {
 		if ($i && clip.userId === $i.id && clip.notesCount != null) {
@@ -40,17 +42,7 @@ export async function getNoteClipMenu(props: {
 		}
 	}
 
-	// const isRenote = (
-	// 	props.note.renote != null &&
-	// 	props.note.reply == null &&
-	// 	props.note.text == null &&
-	// 	props.note.cw == null &&
-	// 	props.note.fileIds && props.note.fileIds.length === 0 &&
-	// 	props.note.poll == null
-	// );
-
-	// const appearNote = isRenote ? props.note.renote as Misskey.entities.Note : props.note;
-	const appearNote = getAppearNote(props.note);
+	const appearNote = getAppearNote(props.note) ?? props.note;
 
 	const clips = await clipsCache.fetch();
 	const menu: MenuItem[] = [...clips.map(clip => ({
@@ -79,7 +71,6 @@ export async function getNoteClipMenu(props: {
 									}
 								}));
 							});
-							if (props.currentClip?.id === clip.id) props.isDeleted.value = true;
 						}
 					} else if (err.id === 'f0dba960-ff73-4615-8df4-d6ac5d9dc118') {
 						os.alert({
@@ -113,7 +104,7 @@ export async function getNoteClipMenu(props: {
 			const { canceled, result } = await os.form(i18n.ts.createNewClip, {
 				name: {
 					type: 'string',
-					default: null,
+					default: null as string | null,
 					label: i18n.ts.name,
 				},
 				description: {
@@ -147,14 +138,9 @@ export function getAbuseNoteMenu(note: Misskey.entities.Note, text: string): Men
 	return {
 		icon: 'ti ti-exclamation-circle',
 		text,
-		action: (): void => {
+		action: async (): Promise<void> => {
 			if (!$i?.policies.allowReport) {
-				os.alert({
-					type: 'error',
-					title: i18n.ts.abuseAbortTitle,
-					text: i18n.ts.abuseAbortText,
-				});
-
+				await os.alert({ type: 'error', title: i18n.ts.abuseAbortTitle, text: i18n.ts.abuseAbortText });
 				return;
 			}
 
@@ -162,10 +148,12 @@ export function getAbuseNoteMenu(note: Misskey.entities.Note, text: string): Men
 			let noteInfo = '';
 			if (note.url ?? note.uri != null) noteInfo = `Note: ${note.url ?? note.uri}\n`;
 			noteInfo += `Local Note: ${localUrl}\n`;
-			os.popup(defineAsyncComponent(() => import('@/components/MkAbuseReportWindow.vue')), {
+			const { dispose } = await os.popupAsyncWithDialog(import('@/components/MkAbuseReportWindow.vue').then(x => x.default), {
 				user: note.user,
 				initialComment: `${noteInfo}-----\n`,
-			}, {}, 'closed');
+			}, {
+				closed: () => dispose(),
+			});
 		},
 	};
 }
@@ -197,37 +185,27 @@ export function getNoteMenu(props: {
 	note: Misskey.entities.Note;
 	translation: Ref<Misskey.entities.NotesTranslateResponse | null>;
 	translating: Ref<boolean>;
-	isDeleted: Ref<boolean>;
-	currentClip?: Misskey.entities.Clip;
+	currentClip?: Misskey.entities.Clip | null;
+	currentAntenna?: Misskey.entities.Antenna | null;
 	postFormDimension?: number | null;
 }) {
-	// const isRenote = (
-	// 	props.note.renote != null &&
-	// 	props.note.reply == null &&
-	// 	props.note.text == null &&
-	// 	props.note.cw == null &&
-	// 	props.note.fileIds && props.note.fileIds.length === 0 &&
-	// 	props.note.poll == null
-	// );
-	//
-	// const appearNote = isRenote ? props.note.renote as Misskey.entities.Note : props.note;
-	const appearNote = getAppearNote(props.note);
+	const appearNote = getAppearNote(props.note) ?? props.note;
+	const link = appearNote.url ?? appearNote.uri;
 
 	const cleanups = [] as (() => void)[];
 
 	function del(): void {
 		os.confirm({
 			type: 'warning',
-			text: isAprilFoolsDay() ? i18n.ts.deleteNotWash + '\n' + i18n.ts.noteDeleteConfirm : i18n.ts.noteDeleteConfirm,
+			text: i18n.ts.noteDeleteConfirm,
 		}).then(({ canceled }) => {
 			if (canceled) return;
-
-			if (isAprilFoolsDay() && !isMute()) {
-				playUrl('/client-assets/sounds/flush.mp3', { volume: store.s.sound_masterVolume });
-			}
+			if ($i == null) return;
 
 			misskeyApi('notes/delete', {
 				noteId: appearNote.id,
+			}).then(() => {
+				globalEvents.emit('noteDeleted', appearNote.id);
 			});
 
 			if (Date.now() - new Date(appearNote.createdAt).getTime() < 1000 * 60 && appearNote.userId === $i.id) {
@@ -236,15 +214,18 @@ export function getNoteMenu(props: {
 		});
 	}
 
-function delEdit(): void {
+	function delEdit(): void {
 		os.confirm({
 			type: 'warning',
 			text: i18n.ts.deleteAndEditConfirm,
 		}).then(({ canceled }) => {
 			if (canceled) return;
+			if ($i == null) return;
 
 			misskeyApi('notes/delete', {
 				noteId: appearNote.id,
+			}).then(() => {
+				globalEvents.emit('noteDeleted', appearNote.id);
 			});
 
 			os.post({
@@ -281,7 +262,7 @@ function delEdit(): void {
 	function togglePin(pin: boolean): void {
 		os.apiWithDialog(pin ? 'i/pin' : 'i/unpin', {
 			noteId: appearNote.id,
-		}, undefined, undefined, undefined, {
+		}, undefined, {
 			'72dab508-c64d-498f-8740-a8eec1ba385a': {
 				text: i18n.ts.pinLimitExceeded,
 			},
@@ -291,10 +272,22 @@ function delEdit(): void {
 	async function unclip(): Promise<void> {
 		if (!props.currentClip) return;
 		os.apiWithDialog('clips/remove-note', { clipId: props.currentClip.id, noteId: appearNote.id });
-		props.isDeleted.value = true;
 	}
 
-	async function promote(): Promise<void> {
+	async function removeFromAntenna(): Promise<void> {
+		if (!props.currentAntenna) return;
+
+		const { canceled } = await os.confirm({
+			type: 'warning',
+			text: i18n.tsx.removeNoteFromAntennaConfirm({ name: props.currentAntenna.name }),
+		});
+		if (canceled) return;
+
+		await os.apiWithDialog('antennas/remove-note', { antennaId: props.currentAntenna.id, noteId: props.note.id });
+		globalEvents.emit('noteRemovedFromAntenna', props.currentAntenna.id, props.note.id);
+	}
+
+	async function _promote(): Promise<void> {
 		const { canceled, result: days } = await os.inputNumber({
 			title: i18n.ts.numberOfDays,
 		});
@@ -321,13 +314,48 @@ function delEdit(): void {
 
 	async function translate(): Promise<void> {
 		if (props.translation.value != null) return;
-		props.translating.value = true;
-		const res = await misskeyApi('notes/translate', {
-			noteId: appearNote.id,
-			targetLang: miLocalStorage.getItem('lang') ?? navigator.language,
-		});
-		props.translating.value = false;
-		props.translation.value = res;
+		if (prefer.s['experimental.enableWebTranslatorApi'] && isInBrowserTranslationAvailable && appearNote.text != null) {
+			props.translating.value = true;
+			try {
+				// @ts-expect-error 実験的なAPIなので型定義がない
+				const detector = await LanguageDetector.create();
+				const langResult = await detector.detect(appearNote.text);
+				let localStorageLang = miLocalStorage.getItem('lang');
+				if (localStorageLang != null) {
+					localStorageLang = localStorageLang.split('-')[0];
+				}
+
+				// 翻訳元と翻訳先の言語が同じ場合はTranslatorがthrowするのでそのまま返す
+				if (langResult[0]?.detectedLanguage === localStorageLang || langResult[0]?.detectedLanguage === navigator.language) {
+					props.translation.value = {
+						sourceLang: langResult[0]?.detectedLanguage ?? 'unknown',
+						text: appearNote.text,
+					};
+					return;
+				}
+
+				// @ts-expect-error 実験的なAPIなので型定義がない
+				const translator = await Translator.create({
+					sourceLanguage: langResult[0]?.detectedLanguage,
+					targetLanguage: localStorageLang ?? navigator.language,
+				});
+				const translated = await translator.translate(appearNote.text);
+				props.translation.value = {
+					sourceLang: langResult[0]?.detectedLanguage ?? 'unknown',
+					text: translated,
+				};
+			} finally {
+				props.translating.value = false;
+			}
+		} else if ($i?.policies.canUseTranslator && instance.translatorAvailable) {
+			props.translating.value = true;
+			const res = await misskeyApi('notes/translate', {
+				noteId: appearNote.id,
+				targetLang: miLocalStorage.getItem('lang') ?? navigator.language,
+			});
+			props.translating.value = false;
+			props.translation.value = res;
+		}
 	}
 
 	const menuItems: MenuItem[] = [];
@@ -356,18 +384,18 @@ function delEdit(): void {
 			action: copyContent,
 		}, getCopyNoteLinkMenu(appearNote, i18n.ts.copyLink));
 
-		if (appearNote.url || appearNote.uri) {
+		if (link) {
 			menuItems.push({
 				icon: 'ti ti-link',
 				text: i18n.ts.copyRemoteLink,
 				action: () => {
-					copyToClipboard(appearNote.url ?? appearNote.uri);
+					copyToClipboard(link);
 				},
 			}, {
 				icon: 'ti ti-external-link',
 				text: i18n.ts.showOnRemote,
 				action: () => {
-					window.open(appearNote.url ?? appearNote.uri, '_blank', 'noopener');
+					window.open(link, '_blank', 'noopener');
 				},
 			});
 		} else {
@@ -382,7 +410,7 @@ function delEdit(): void {
 			});
 		}
 
-		if ($i.policies.canUseTranslator && instance.translatorAvailable) {
+		if ((prefer.s['experimental.enableWebTranslatorApi'] && isInBrowserTranslationAvailable) || ($i.policies.canUseTranslator && instance.translatorAvailable)) {
 			menuItems.push({
 				icon: 'ti ti-language-hiragana',
 				text: i18n.ts.translate,
@@ -467,19 +495,23 @@ function delEdit(): void {
 						channelChildMenu.push({
 							icon: 'ti ti-pinned-off',
 							text: i18n.ts.unpin,
-							action: () => os.apiWithDialog('channels/update', {
-								channelId: appearNote.channel!.id,
-								pinnedNoteIds: channel.pinnedNoteIds.filter(id => id !== appearNote.id),
-							}),
+							action: async () => {
+								await os.apiWithDialog('channels/update', {
+									channelId: appearNote.channel!.id,
+									pinnedNoteIds: channel.pinnedNoteIds.filter(id => id !== appearNote.id),
+								});
+							},
 						});
 					} else {
 						channelChildMenu.push({
 							icon: 'ti ti-pin',
 							text: i18n.ts.pin,
-							action: () => os.apiWithDialog('channels/update', {
-								channelId: appearNote.channel!.id,
-								pinnedNoteIds: [...channel.pinnedNoteIds, appearNote.id],
-							}),
+							action: async () => {
+								await os.apiWithDialog('channels/update', {
+									channelId: appearNote.channel!.id,
+									pinnedNoteIds: [...channel.pinnedNoteIds, appearNote.id],
+								});
+							},
 						});
 					}
 					return channelChildMenu;
@@ -496,11 +528,27 @@ function delEdit(): void {
 					action: delEdit,
 				});
 			}
+			if (props.currentAntenna != null) {
+				menuItems.push({
+					icon: 'ti ti-trash',
+					text: i18n.ts.removeFromAntenna,
+					danger: true,
+					action: removeFromAntenna,
+				});
+			}
 			menuItems.push({
-				icon: isAprilFoolsDay() ? 'ti ti-whirl' : 'ti ti-trash',
-				text: isAprilFoolsDay() ? i18n.ts.flushItAway : i18n.ts.delete,
+				icon: 'ti ti-trash',
+				text: i18n.ts.delete,
 				danger: true,
 				action: del,
+			});
+		} else if (props.currentAntenna != null) {
+			menuItems.push({ type: 'divider' });
+			menuItems.push({
+				icon: 'ti ti-trash',
+				text: i18n.ts.removeFromAntenna,
+				danger: true,
+				action: removeFromAntenna,
 			});
 		}
 	} else {
@@ -514,18 +562,18 @@ function delEdit(): void {
 			action: copyContent,
 		}, getCopyNoteLinkMenu(appearNote, i18n.ts.copyLink));
 
-		if (appearNote.url || appearNote.uri) {
+		if (link != null) {
 			menuItems.push({
 				icon: 'ti ti-link',
 				text: i18n.ts.copyRemoteLink,
 				action: () => {
-					copyToClipboard(appearNote.url ?? appearNote.uri);
+					copyToClipboard(link);
 				},
 			}, {
 				icon: 'ti ti-external-link',
 				text: i18n.ts.showOnRemote,
 				action: () => {
-					window.open(appearNote.url ?? appearNote.uri, '_blank', 'noopener');
+					window.open(link, '_blank', 'noopener');
 				},
 			});
 		} else {
@@ -581,21 +629,11 @@ function smallerVisibility(a: Visibility, b: Visibility): Visibility {
 
 export function getRenoteMenu(props: {
 	note: Misskey.entities.Note;
-	renoteButton: ShallowRef<HTMLElement | undefined>;
+	renoteButton: ShallowRef<HTMLElement | null | undefined>;
 	mock?: boolean;
 	postFormDimension?: number | null;
 }) {
-	// const isRenote = (
-	// 	props.note.renote != null &&
-	// 	props.note.reply == null &&
-	// 	props.note.text == null &&
-	// 	props.note.cw == null &&
-	// 	props.note.fileIds && props.note.fileIds.length === 0 &&
-	// 	props.note.poll == null
-	// );
-	//
-	// const appearNote = isRenote ? props.note.renote as Misskey.entities.Note : props.note;
-	const appearNote = getAppearNote(props.note);
+	const appearNote = getAppearNote(props.note) ?? props.note;
 	const dimension = appearNote.dimension ?? prefer.s.dimension ?? 0;
 	const postFormDimension = props.postFormDimension ?? undefined;
 
@@ -613,7 +651,9 @@ export function getRenoteMenu(props: {
 					const rect = el.getBoundingClientRect();
 					const x = rect.left + (el.offsetWidth / 2);
 					const y = rect.top + (el.offsetHeight / 2);
-					os.popup(MkRippleEffect, { x, y }, {}, 'end');
+					const { dispose } = os.popup(MkRippleEffect, { x, y }, {
+						end: () => dispose(),
+					});
 				}
 
 				if (!props.mock) {
@@ -652,7 +692,9 @@ export function getRenoteMenu(props: {
 					const rect = el.getBoundingClientRect();
 					const x = rect.left + (el.offsetWidth / 2);
 					const y = rect.top + (el.offsetHeight / 2);
-					os.popup(MkRippleEffect, { x, y }, {}, 'end');
+					const { dispose } = os.popup(MkRippleEffect, { x, y }, {
+						end: () => dispose(),
+					});
 				}
 
 				const configuredVisibility = prefer.s.rememberNoteVisibility ? store.s.visibility : prefer.s.defaultNoteVisibility;
@@ -676,7 +718,7 @@ export function getRenoteMenu(props: {
 					});
 				}
 			},
-		}, (props.mock) ? undefined : {
+		}, ...(props.mock ? [] : [{
 			text: i18n.ts.quote,
 			icon: 'ti ti-quote',
 			action: () => {
@@ -685,7 +727,7 @@ export function getRenoteMenu(props: {
 					initialDimension: postFormDimension,
 				});
 			},
-		}]);
+		}])]);
 
 		normalExternalChannelRenoteItems.push({
 			type: 'parent',
@@ -704,7 +746,9 @@ export function getRenoteMenu(props: {
 							const rect = el.getBoundingClientRect();
 							const x = rect.left + (el.offsetWidth / 2);
 							const y = rect.top + (el.offsetHeight / 2);
-							os.popup(MkRippleEffect, { x, y }, {}, 'end');
+							const { dispose } = os.popup(MkRippleEffect, { x, y }, {
+								end: () => dispose(),
+							});
 						}
 
 						if (!props.mock) {

@@ -46,12 +46,6 @@ export const packedNoteSchema = {
 			format: 'id',
 			example: 'xxxxxxxxxx',
 		},
-		replyUserId: {
-			type: 'string',
-			optional: true, nullable: true,
-			format: 'id',
-			example: 'xxxxxxxxxx',
-		},
 		renoteId: {
 			type: 'string',
 			optional: true, nullable: true,
@@ -264,6 +258,10 @@ export const packedNoteSchema = {
 		},
 		clippedCount: {
 			type: 'number',
+			optional: true, nullable: false,
+		},
+		hasPoll: {
+			type: 'boolean',
 			optional: true, nullable: false,
 		},
 

@@ -1,23 +1,56 @@
 import path from 'path';
-import pluginReplace from '@rollup/plugin-replace';
 import pluginVue from '@vitejs/plugin-vue';
+import pluginGlsl from 'vite-plugin-glsl';
+import { replacePlugin } from 'rolldown/plugins';
+import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig } from 'vite';
-import type { UserConfig } from 'vite';
-import * as yaml from 'js-yaml';
+import type { PluginOption, UserConfig } from 'vite';
+import { load as loadYaml } from 'js-yaml';
 import { promises as fsp } from 'fs';
 
-import locales from '../../locales/index.js';
+import locales from 'i18n';
 import meta from '../../package.json';
 import packageInfo from './package.json' with { type: 'json' };
-import pluginJson5 from './vite.json5.js';
-import pluginCreateSearchIndex from './lib/vite-plugin-create-search-index.js';
+import pluginUnwindCssModuleClassName from './lib/rollup-plugin-unwind-css-module-class-name.js';
+import pluginJson5 from './lib/vite-plugin-json5.js';
 import type { Options as SearchIndexOptions } from './lib/vite-plugin-create-search-index.js';
+import pluginCreateSearchIndex from './lib/vite-plugin-create-search-index.js';
 import { Features } from 'lightningcss';
+import pluginWatchLocales from './lib/vite-plugin-watch-locales.js';
+import { pluginRemoveUnrefI18n } from '../frontend-builder/rollup-plugin-remove-unref-i18n.js';
 
-const url = process.env.NODE_ENV === 'development' ? yaml.load(await fsp.readFile('../../.config/default.yml', 'utf-8')).url : null;
+const url = process.env.NODE_ENV === 'development' ? (loadYaml(await fsp.readFile('../../.config/default.yml', 'utf-8')) as any).url : null;
 const host = url ? (new URL(url)).hostname : undefined;
 
 const extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json', '.json5', '.svg', '.sass', '.scss', '.css', '.vue'];
+
+function getBundleVisualizerPlugin(): PluginOption[] {
+	if (process.env.FRONTEND_BUNDLE_VISUALIZER !== 'true') return [];
+
+	const visualizerOptions = {
+		title: 'Misskey frontend bundle visualizer',
+		gzipSize: true,
+		brotliSize: true,
+		projectRoot: path.resolve(__dirname, '../..'),
+	};
+	const plugins = [
+		visualizer({
+			...visualizerOptions,
+			filename: process.env.FRONTEND_BUNDLE_VISUALIZER_FILE,
+			template: 'raw-data',
+		}) as PluginOption,
+	];
+
+	if (process.env.FRONTEND_BUNDLE_VISUALIZER_HTML_FILE != null) {
+		plugins.push(visualizer({
+			...visualizerOptions,
+			filename: process.env.FRONTEND_BUNDLE_VISUALIZER_HTML_FILE,
+			template: 'treemap',
+		}) as PluginOption);
+	}
+
+	return plugins;
+}
 
 /**
  * 検索インデックスの生成設定
@@ -26,6 +59,11 @@ export const searchIndexes = [{
 	targetFilePaths: ['src/pages/settings/*.vue'],
 	mainVirtualModule: 'search-index:settings',
 	modulesToHmrOnUpdate: ['src/pages/settings/index.vue'],
+	verbose: process.env.FRONTEND_SEARCH_INDEX_VERBOSE === 'true',
+}, {
+	targetFilePaths: ['src/pages/admin/*.vue'],
+	mainVirtualModule: 'search-index:admin',
+	modulesToHmrOnUpdate: ['src/pages/admin/index.vue'],
 	verbose: process.env.FRONTEND_SEARCH_INDEX_VERBOSE === 'true',
 }] satisfies SearchIndexOptions[];
 
@@ -78,31 +116,44 @@ export function toBase62(n: number): string {
 }
 
 export function getConfig(): UserConfig {
+	const localesHash = toBase62(hash(JSON.stringify(locales)));
+
 	return {
 		base: '/vite/',
+		clearScreen: false,
 
 		server: {
-			host,
+			host: '0.0.0.0',
+			allowedHosts: host ? [host] : undefined,
 			port: 5173,
+			strictPort: true,
+			hmr: {
+				// バックエンド経由でもViteへ直接接続する
+				clientPort: 5173,
+			},
 			headers: { // なんか効かない
 				'X-Frame-Options': 'DENY',
 			},
 		},
 
 		plugins: [
+			pluginWatchLocales(),
 			...searchIndexes.map(options => pluginCreateSearchIndex(options)),
 			pluginVue(),
+			pluginRemoveUnrefI18n(),
+			pluginUnwindCssModuleClassName(),
 			pluginJson5(),
+			pluginGlsl({ minify: true }),
 			...process.env.NODE_ENV === 'production'
 				? [
-					pluginReplace({
+					replacePlugin({
+						'isChromatic()': JSON.stringify(false),
+					}, {
 						preventAssignment: true,
-						values: {
-							'isChromatic()': JSON.stringify(false),
-						},
 					}),
 				]
 				: [],
+			...getBundleVisualizerPlugin(),
 		],
 
 		resolve: {
@@ -112,8 +163,7 @@ export function getConfig(): UserConfig {
 				'@@/': __dirname + '/../frontend-shared/',
 				'/client-assets/': __dirname + '/assets/',
 				'/static-assets/': __dirname + '/../backend/assets/',
-				'/fluent-emojis/': __dirname + '/../../fluent-emojis/dist/',
-				'/fluent-emoji/': __dirname + '/../../fluent-emojis/dist/',
+				'/fluent-emoji/': '@misskey-dev/emoji-assets/fluent-emoji/',
 			},
 		},
 
@@ -131,11 +181,6 @@ export function getConfig(): UserConfig {
 					}
 				},
 			},
-			preprocessorOptions: {
-				scss: {
-					api: 'modern-compiler',
-				},
-			},
 		},
 
 		define: {
@@ -144,10 +189,7 @@ export function getConfig(): UserConfig {
 			_ENV_: JSON.stringify(process.env.NODE_ENV),
 			_DEV_: process.env.NODE_ENV !== 'production',
 			_PERF_PREFIX_: JSON.stringify('Misskey:'),
-			_DATA_TRANSFER_DRIVE_FILE_: JSON.stringify('mk_drive_file'),
-			_DATA_TRANSFER_DRIVE_FOLDER_: JSON.stringify('mk_drive_folder'),
-			_DATA_TRANSFER_DECK_COLUMN_: JSON.stringify('mk_deck_column'),
-			__VUE_OPTIONS_API__: true,
+			__VUE_OPTIONS_API__: false,
 			__VUE_PROD_DEVTOOLS__: false,
 		},
 
@@ -158,26 +200,37 @@ export function getConfig(): UserConfig {
 				'safari18.2',
 			],
 			manifest: 'manifest.json',
-			rollupOptions: {
+			rolldownOptions: {
+				experimental: {
+					nativeMagicString: true,
+				},
 				input: {
-					app: './src/_boot_.ts',
+					i18n: './src/i18n.ts',
+					entry: './src/_boot_.ts',
 				},
 				external: externalPackages.map(p => p.match),
+				preserveEntrySignatures: 'allow-extension',
 				output: {
-					manualChunks: {
-						vue: ['vue'],
-						photoswipe: ['photoswipe', 'photoswipe/lightbox', 'photoswipe/style.css'],
+					codeSplitting: {
+						groups: [{
+							name: 'vue',
+							test: /node_modules[\\/]vue/,
+						}, {
+							// split i18n related module to distinct module
+							name: 'i18n',
+							includeDependenciesRecursively: false,
+							test: /i18n\.ts|locale\.ts/,
+						}],
 					},
-					entryFileNames: `${meta.version}.[hash].js`,
-					chunkFileNames: `${meta.version}.[hash].js`,
-					assetFileNames: `${meta.version}.[hash][extname]`,
+					entryFileNames: `scripts/${localesHash}-[hash:8].js`,
+					chunkFileNames: `scripts/${localesHash}-[hash:8].js`,
+					assetFileNames: `assets/${localesHash}-[hash:8][extname]`,
 					sourcemapPathTransform: (relativeSourcePath, sourcemapPath) => {
 						const repoRoot = path.resolve(__dirname, '../..');
 						const absoluteSourcePath = path.isAbsolute(relativeSourcePath)
 							? relativeSourcePath
 							: path.resolve(path.dirname(sourcemapPath), relativeSourcePath);
 						const rootedPath = path.relative(repoRoot, absoluteSourcePath);
-
 						return rootedPath.startsWith('..')
 							? relativeSourcePath.replaceAll('\\', '/')
 							: rootedPath.replaceAll('\\', '/');
@@ -201,22 +254,6 @@ export function getConfig(): UserConfig {
 
 		worker: {
 			format: 'es',
-		},
-
-		test: {
-			environment: 'jsdom',
-			fileParallelism: false,
-			deps: {
-				optimizer: {
-					web: {
-						include: [
-							// XXX: misskey-dev/browser-image-resizer has no "type": "module"
-							'browser-image-resizer',
-						],
-					},
-				},
-			},
-			includeSource: ['src/**/*.ts'],
 		},
 	};
 }

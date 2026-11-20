@@ -7,7 +7,7 @@ import RE2 from 're2';
 import * as mfm from 'mfm-js';
 import { Inject, Injectable } from '@nestjs/common';
 import ms from 'ms';
-import { JSDOM } from 'jsdom';
+import * as htmlParser from 'node-html-parser';
 import { extractCustomEmojisFromMfm } from '@/misc/extract-custom-emojis-from-mfm.js';
 import { extractHashtags } from '@/misc/extract-hashtags.js';
 import * as Acct from '@/misc/acct.js';
@@ -256,6 +256,8 @@ export const paramDef = {
 				quote: notificationRecieveConfig,
 				reaction: notificationRecieveConfig,
 				pollEnded: notificationRecieveConfig,
+				scheduledNotePosted: notificationRecieveConfig,
+				scheduledNotePostFailed: notificationRecieveConfig,
 				receiveFollowRequest: notificationRecieveConfig,
 				followRequestAccepted: notificationRecieveConfig,
 				roleAssigned: notificationRecieveConfig,
@@ -350,6 +352,8 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			const policy = await this.roleService.getUserPolicies(user.id);
 
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: user.id });
+			let policies: RolePolicies | null = null;
+
 			if (ps.name !== undefined) {
 				if (ps.name === null) {
 					updates.name = null;
@@ -484,6 +488,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			}
 
 			if (ps.avatarDecorations) {
+				policies ??= await this.roleService.getUserPolicies(user.id);
 				const decorations = await this.avatarDecorationService.getAll(true);
 				const myRoles = await this.roleService.getUserRoles(user.id);
 				const allRoles = await this.roleService.getRoles();
@@ -665,16 +670,15 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 		try {
 			const html = await this.httpRequestService.getHtml(url);
 
-			const { window } = new JSDOM(html);
-			const doc: Document = window.document as Document;
+			const doc = htmlParser.parse(html);
 
 			const myLink = `${this.config.url}/@${user.username}`;
 
 			const aEls = Array.from(doc.getElementsByTagName('a'));
 			const linkEls = Array.from(doc.getElementsByTagName('link'));
 
-			const includesMyLink = aEls.some(a => a.href === myLink);
-			const includesRelMeLinks = [...aEls, ...linkEls].some(link => link.rel === 'me' && link.href === myLink);
+			const includesMyLink = aEls.some(a => a.attributes.href === myLink);
+			const includesRelMeLinks = [...aEls, ...linkEls].some(link => link.attributes.rel?.split(/\s+/).includes('me') && link.attributes.href === myLink);
 
 			if (includesMyLink || includesRelMeLinks) {
 				await this.userProfilesRepository.createQueryBuilder('profile').update()
@@ -684,8 +688,6 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 					})
 					.execute();
 			}
-
-			window.close();
 		} catch (err) {
 		// なにもしない
 		}

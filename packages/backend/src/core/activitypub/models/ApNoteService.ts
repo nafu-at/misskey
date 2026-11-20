@@ -43,8 +43,8 @@ export class ApNoteService {
 	private logger: Logger;
 
 	constructor(
-		@Inject(DI.redisForTimelines)
-		private redisForTimelines: Redis.Redis,
+		@Inject(DI.redis)
+		private redisClient: Redis.Redis,
 
 		@Inject(DI.pollsRepository)
 		private pollsRepository: PollsRepository,
@@ -131,7 +131,7 @@ export class ApNoteService {
 	@bindThis
 	public async createNote(value: string | IObject, actor?: MiRemoteUser, resolver?: Resolver, silent = false): Promise<MiNote | null> {
 		// eslint-disable-next-line no-param-reassign
-		if (resolver == null) resolver = this.apResolverService.createResolver();
+		if (resolver == null) resolver = await this.apResolverService.createResolver();
 
 		const meta = await this.metaService.fetch();
 
@@ -189,6 +189,7 @@ export class ApNoteService {
 			throw new IdentifiableError('85ab9bd7-3a41-4530-959d-f07073900109', `User ${actor.id} has been suspended.`);
 		}
 
+		const apMentionRawCount = new Set(this.apMentionService.extractApMentionObjects(note.tag).map(x => x.href)).size;
 		const apMentions = await this.apMentionService.extractApMentions(note.tag, resolver);
 		const apHashtags = extractApHashtags(note.tag);
 
@@ -343,6 +344,7 @@ export class ApNoteService {
 				visibility,
 				visibleUsers,
 				apMentions,
+				apMentionRawCount,
 				apHashtags,
 				apEmojis,
 				poll,
@@ -356,7 +358,7 @@ export class ApNoteService {
 			this.logger.info('The note is already inserted while creating itself, reading again');
 			const duplicate = await this.fetchNote(value);
 			if (!duplicate) {
-				throw new Error(`The note creation failed with duplication error even when there is no duplication: ${entryUri}`, { cause: err });
+				throw new Error(`The note creation failed with duplication error even when there is no duplication: ${entryUri}`);
 			}
 			return duplicate;
 		}
@@ -376,7 +378,7 @@ export class ApNoteService {
 			throw new StatusError('blocked host', 451);
 		}
 
-		const unlock = await acquireApObjectLock(this.redisForTimelines, uri);
+		const unlock = await acquireApObjectLock(this.redisClient, uri);
 
 		try {
 			//#region このサーバーに既に登録されていたらそれを返す

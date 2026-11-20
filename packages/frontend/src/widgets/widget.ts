@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { reactive, watch } from 'vue';
+import { defineAsyncComponent, reactive, watch } from 'vue';
 import { throttle } from 'throttle-debounce';
-import type { Form, GetFormResultType } from '@/utility/form.js';
+import type { Reactive } from 'vue';
+import type { FormWithDefault, GetFormResultType } from '@/utility/form.js';
+import { getDefaultFormValues } from '@/utility/form.js';
 import * as os from '@/os.js';
 import { deepClone } from '@/utility/clone.js';
+import type { WidgetName } from './index.js';
 
 export type Widget<P extends Record<string, unknown>> = {
 	id: string;
@@ -19,7 +22,7 @@ export type WidgetComponentProps<P extends Record<string, unknown>> = {
 };
 
 export type WidgetComponentEmits<P extends Record<string, unknown>> = {
-	(ev: 'updateProps', props: P);
+	(ev: 'updateProps', props: P): void;
 };
 
 export type WidgetComponentExpose = {
@@ -28,47 +31,73 @@ export type WidgetComponentExpose = {
 	configure: () => void;
 };
 
-export const useWidgetPropsManager = <
-	F extends Form & Record<string, { default: any; }>,
-	R extends GetFormResultType<F> = GetFormResultType<F>,
->(
-	name: string,
+export const useWidgetPropsManager = <F extends FormWithDefault>(
+	name: WidgetName,
 	propsDef: F,
-	props: Readonly<WidgetComponentProps<R>>,
-	emit: WidgetComponentEmits<R>,
+	props: Readonly<WidgetComponentProps<GetFormResultType<F>>>,
+	emit: WidgetComponentEmits<GetFormResultType<F>>,
 ): {
-	widgetProps: R;
+	widgetProps: Reactive<GetFormResultType<F>>;
 	save: () => void;
 	configure: () => void;
 } => {
-	const initialData = (props.widget ? deepClone(props.widget.data) : {}) as Partial<R>;
-	const widgetProps = reactive(initialData) as R;
-
-	const mergeProps = () => {
-		for (const prop of Object.keys(propsDef) as (keyof R & keyof F)[]) {
-			if (typeof widgetProps[prop] === 'undefined') {
-				widgetProps[prop] = propsDef[prop].default as R[typeof prop];
+	const widgetProps = reactive((() => {
+		const np = getDefaultFormValues(propsDef);
+		if (props.widget?.data != null) {
+			for (const key of Object.keys(props.widget.data) as (keyof F)[]) {
+				np[key] = props.widget.data[key] as GetFormResultType<F>[typeof key];
 			}
 		}
-	};
-	watch(widgetProps, () => {
-		mergeProps();
-	}, { deep: true, immediate: true });
+		return np;
+	})());
+
+	watch(() => props.widget?.data, (to) => {
+		if (to != null) {
+			for (const key of Object.keys(propsDef)) {
+				(widgetProps as any)[key] = to[key];
+			}
+		}
+	}, { deep: true });
 
 	const save = throttle(3000, () => {
-		emit('updateProps', widgetProps);
+		emit('updateProps', widgetProps as GetFormResultType<F>);
 	});
 
 	const configure = async () => {
 		const form = deepClone(propsDef);
 		for (const item of Object.keys(form)) {
-			form[item].default = widgetProps[item];
+			form[item].default = (widgetProps as any)[item];
 		}
-		const { canceled, result } = await os.form(name, form);
-		if (canceled) return;
 
-		for (const key of Object.keys(result) as (keyof R)[]) {
-			widgetProps[key] = result[key] as R[typeof key];
+		const res = await new Promise<{
+			canceled: false;
+			result: GetFormResultType<F>;
+		} | {
+			canceled: true;
+		}>((resolve) => {
+			const { dispose } = os.popup(defineAsyncComponent(() => import('@/components/MkWidgetSettingsDialog.vue')), {
+				widgetName: name,
+				form: form,
+				currentSettings: widgetProps,
+			}, {
+				saved: (newProps) => {
+					resolve({ canceled: false, result: newProps as GetFormResultType<F> });
+				},
+				canceled: () => {
+					resolve({ canceled: true });
+				},
+				closed: () => {
+					dispose();
+				},
+			});
+		});
+
+		if (res.canceled) {
+			return;
+		}
+
+		for (const key of Object.keys(res.result)) {
+			(widgetProps as any)[key] = res.result[key];
 		}
 
 		save();

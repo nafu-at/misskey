@@ -1,24 +1,127 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 export const packedNoteDraftSchema = {
 	type: 'object',
 	properties: {
 		id: {
 			type: 'string',
 			optional: false, nullable: false,
-			format: 'misskey:id',
+			format: 'id',
+			example: 'xxxxxxxxxx',
 		},
-		updatedAt: {
+		createdAt: {
 			type: 'string',
 			optional: false, nullable: false,
 			format: 'date-time',
 		},
-		scheduledAt: {
+		text: {
 			type: 'string',
 			optional: false, nullable: true,
-			format: 'date-time',
 		},
-		reason: {
+		cw: {
 			type: 'string',
+			optional: false, nullable: true,
+		},
+		userId: {
+			type: 'string',
+			optional: false, nullable: false,
+			format: 'id',
+		},
+		user: {
+			type: 'object',
+			ref: 'UserLite',
+			optional: false, nullable: false,
+		},
+		replyId: {
+			type: 'string',
+			optional: false, nullable: true,
+			format: 'id',
+		},
+		renoteId: {
+			type: 'string',
+			optional: false, nullable: true,
+			format: 'id',
+		},
+		reply: {
+			type: 'object',
+			optional: true, nullable: true,
+			ref: 'Note',
+		},
+		renote: {
+			type: 'object',
+			optional: true, nullable: true,
+			ref: 'Note',
+		},
+		visibility: {
+			type: 'string',
+			optional: false, nullable: false,
+			enum: ['public', 'home', 'followers', 'specified'],
+		},
+		visibleUserIds: {
+			type: 'array',
+			optional: false, nullable: false,
+			items: {
+				type: 'string',
+				optional: false, nullable: false,
+				format: 'id',
+			},
+		},
+		fileIds: {
+			type: 'array',
+			optional: false, nullable: false,
+			items: {
+				type: 'string',
+				optional: false, nullable: false,
+				format: 'id',
+			},
+		},
+		files: {
+			type: 'array',
 			optional: true, nullable: false,
+			items: {
+				type: 'object',
+				optional: false, nullable: false,
+				ref: 'DriveFile',
+			},
+		},
+		hashtag: {
+			type: 'string',
+			optional: false, nullable: true,
+		},
+		poll: {
+			type: 'object',
+			optional: false, nullable: true,
+			properties: {
+				expiresAt: {
+					type: 'string',
+					optional: true, nullable: true,
+					format: 'date-time',
+				},
+				expiredAfter: {
+					type: 'number',
+					optional: true, nullable: true,
+				},
+				multiple: {
+					type: 'boolean',
+					optional: false, nullable: false,
+				},
+				choices: {
+					type: 'array',
+					optional: false, nullable: false,
+					items: {
+						type: 'string',
+						optional: false, nullable: false,
+					},
+				},
+			},
+		},
+		channelId: {
+			type: 'string',
+			optional: false, nullable: true,
+			format: 'id',
 		},
 		channel: {
 			type: 'object',
@@ -27,161 +130,69 @@ export const packedNoteDraftSchema = {
 				id: {
 					type: 'string',
 					optional: false, nullable: false,
-					format: 'misskey:id',
 				},
 				name: {
 					type: 'string',
 					optional: false, nullable: false,
 				},
-			},
-		},
-		renote: {
-			type: 'object',
-			optional: true, nullable: true,
-			properties: {
-				id: {
+				color: {
 					type: 'string',
 					optional: false, nullable: false,
-					format: 'misskey:id',
 				},
-				text: {
-					type: 'string',
-					optional: false, nullable: true,
-				},
-				user: {
-					type: 'object',
+				isSensitive: {
+					type: 'boolean',
 					optional: false, nullable: false,
-					properties: {
-						id: {
-							type: 'string',
-							optional: false, nullable: false,
-							format: 'misskey:id',
-						},
-						username: {
-							type: 'string',
-							optional: false, nullable: false,
-						},
-						host: {
-							type: 'string',
-							optional: false, nullable: true,
-						},
-					},
 				},
-			},
-		},
-		reply: {
-			type: 'object',
-			optional: true, nullable: true,
-			properties: {
-				id: {
-					type: 'string',
+				allowRenoteToExternal: {
+					type: 'boolean',
 					optional: false, nullable: false,
-					format: 'misskey:id',
 				},
-				text: {
+				userId: {
 					type: 'string',
 					optional: false, nullable: true,
 				},
-				user: {
-					type: 'object',
-					optional: false, nullable: false,
-					properties: {
-						id: {
-							type: 'string',
-							optional: false, nullable: false,
-							format: 'misskey:id',
-						},
-						username: {
-							type: 'string',
-							optional: false, nullable: false,
-						},
-						host: {
-							type: 'string',
-							optional: false, nullable: true,
-						},
-					},
-				},
 			},
 		},
-		data: {
-			type: 'object',
+		localOnly: {
+			type: 'boolean',
 			optional: false, nullable: false,
-			properties: {
-				text: {
-					type: 'string',
-					optional: false, nullable: true,
-				},
-				useCw: {
-					type: 'boolean',
-					optional: false, nullable: false,
-				},
-				cw: {
-					type: 'string',
-					optional: false, nullable: true,
-				},
-				visibility: {
-					type: 'string',
-					optional: false, nullable: false,
-					enum: ['public', 'home', 'followers', 'specified'],
-				},
-				localOnly: {
-					type: 'boolean',
-					optional: false, nullable: false,
-				},
-				lang: {
-					type: 'string',
-					optional: true, nullable: true,
-				},
-				dimension: {
-					type: 'integer',
-					optional: true, nullable: true,
-				},
-				files: {
-					type: 'array',
-					optional: false, nullable: false,
-					items: {
-						type: 'object',
-						optional: false, nullable: false,
-						ref: 'DriveFile',
-					},
-				},
-				poll: {
-					type: 'object',
-					optional: false, nullable: true,
-					properties: {
-						choices: {
-							type: 'array',
-							optional: false, nullable: false,
-							items: {
-								type: 'string',
-								optional: false, nullable: false,
-							},
-						},
-						multiple: {
-							type: 'boolean',
-							optional: false, nullable: false,
-						},
-						expiresAt: {
-							type: 'integer',
-							optional: false, nullable: true,
-						},
-						expiredAfter: {
-							type: 'integer',
-							optional: false, nullable: true,
-							minimum: 1,
-						},
-					},
-				},
-				visibleUserIds: {
-					type: 'array',
-					optional: true, nullable: false,
-					items: {
-						type: 'string',
-						optional: false, nullable: false,
-						format: 'misskey:id',
-					},
-				},
-			},
+		},
+		dimension: {
+			type: 'integer',
+			optional: false, nullable: true,
+		},
+		lang: {
+			type: 'string',
+			optional: false, nullable: true,
+		},
+		reactionAcceptance: {
+			type: 'string',
+			optional: false, nullable: true,
+			enum: ['likeOnly', 'likeOnlyForRemote', 'nonSensitiveOnly', 'nonSensitiveOnlyForLocalLikeOnlyForRemote', null],
+		},
+		scheduledAt: {
+			type: 'number',
+			optional: false, nullable: true,
+		},
+		isActuallyScheduled: {
+			type: 'boolean',
+			optional: false, nullable: false,
+		},
+		scheduledFailureReason: {
+			type: 'string',
+			optional: false, nullable: true,
+		},
+		noExtractMentions: {
+			type: 'boolean',
+			optional: false, nullable: false,
+		},
+		noExtractHashtags: {
+			type: 'boolean',
+			optional: false, nullable: false,
+		},
+		noExtractEmojis: {
+			type: 'boolean',
+			optional: false, nullable: false,
 		},
 	},
 } as const;
