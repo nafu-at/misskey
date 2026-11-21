@@ -11,7 +11,7 @@ import { NotificationService } from '@/core/NotificationService.js';
 import { secureRndstr } from '@/misc/secure-rndstr.js';
 import { DI } from '@/di-symbols.js';
 import { RoleService } from '@/core/RoleService.js';
-import { ApiError } from '../../error.js';
+import { ApiError, enrollmentRequired } from '../../error.js';
 
 export const meta = {
 	tags: ['auth'],
@@ -71,11 +71,12 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 
 			await this.accessTokensRepository.manager.transaction(async (manager) => {
 				// Serialize issuance for this user, including their first token.
-				await manager.findOneOrFail(MiUser, {
+				const owner = await manager.findOne(MiUser, {
 					select: { id: true },
-					where: { id: me.id },
+					where: { id: me.id, token: me.token! },
 					lock: { mode: 'pessimistic_write' },
 				});
+				if (!owner) throw new ApiError(enrollmentRequired);
 				if (await manager.countBy(MiAccessToken, { userId: me.id }) >= accessTokenLimit) {
 					throw new ApiError(meta.errors.tooManyAccessTokens);
 				}

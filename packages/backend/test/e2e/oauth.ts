@@ -19,10 +19,11 @@ import {
 	ModuleOptions,
 	ResourceOwnerPassword,
 } from 'simple-oauth2';
+import * as OTPAuth from 'otpauth';
 import pkceChallenge from 'pkce-challenge';
 import * as htmlParser from 'node-html-parser';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
-import { api, port, sendEnvUpdateRequest, signup } from '../utils.js';
+import { api, port, role, sendEnvUpdateRequest, signup } from '../utils.js';
 import type * as misskey from 'misskey-js';
 
 const host = `http://127.0.0.1:${port}`;
@@ -902,6 +903,23 @@ describe('OAuth', () => {
 			assert.strictEqual(tokenResponse.token_type, 'Bearer');
 			assert.strictEqual(tokenResponse.scope, 'write:notes');
 		});
+	});
+
+	test('revokes outstanding approvals when role-required enrollment rotates credentials', async () => {
+		const user = await signup();
+		const { code_challenge, code_verifier } = await pkceChallenge(128);
+		const { client, code } = await fetchAuthorizationCode(user, 'read:account', code_challenge);
+		const required = await role(alice, {}, { required2fa: { useDefault: false, priority: 1, value: true } });
+		assert.strictEqual((await api('admin/roles/assign', { roleId: required.id, userId: user.id }, alice)).status, 204);
+		const consent = await fetch(client.authorizeURL({ redirect_uri, scope: 'read:account', state: 'consent', code_challenge, code_challenge_method: 'S256' } as AuthorizationParamsExtended));
+		const denied = await fetchDecisionFromResponse(consent, user);
+		await assertDirectError(denied, 403, 'access_denied');
+		const enrollment = (await api('signin-flow', { username: user.username, password: 'test' })).body;
+		assert.ok(!enrollment.finished && enrollment.next === 'enroll-2fa');
+		const otp = OTPAuth.URI.parse(enrollment.url).generate();
+		assert.strictEqual((await api('signin-enroll-2fa', { ticket: enrollment.ticket, code: otp })).status, 200);
+		await assert.rejects(client.getToken({ code, redirect_uri, code_verifier } as AuthorizationTokenConfigExtended),
+			(err: GetTokenError) => err.data.payload.error === 'invalid_grant');
 	});
 
 	describe('io SSO', () => {

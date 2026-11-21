@@ -155,6 +155,10 @@ function createAccount() {
 		password: password.value,
 		setupPassword: setupPassword.value === '' ? null : setupPassword.value,
 	}).then(res => {
+		if (!res.token) {
+			window.location.replace('/?required2fa=1');
+			return;
+		}
 		token = res.token;
 		accountCreated.value = true;
 	}).catch((err) => {

@@ -66,6 +66,7 @@ async function signin(
 async function createAdmin(host: Host): Promise<Misskey.entities.SignupResponse | undefined> {
 	const client = new Misskey.api.APIClient({ origin: `https://${host}` });
 	return await client.request('admin/accounts/create', ADMIN_PARAMS).then(res => {
+		if (res.token == null) throw new Error('Federation test admin requires two-factor enrollment');
 		ADMIN_CACHE.set(host, {
 			id: res.id,
 			i: res.token,

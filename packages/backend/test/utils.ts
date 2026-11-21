@@ -139,13 +139,14 @@ function timeoutPromise<T>(p: Promise<T>, timeout: number): Promise<T> {
 	]);
 }
 
-export const signup = async (params?: Partial<misskey.Endpoints['signup']['req']>): Promise<NonNullable<misskey.Endpoints['signup']['res']>> => {
+export const signup = async (params?: Partial<misskey.Endpoints['signup']['req']>): Promise<misskey.entities.SignupResponse> => {
 	const q = Object.assign({
 		username: randomString(),
 		password: 'test',
 	}, params);
 
 	const res = await api('signup', q);
+	if ('next' in res.body) throw new Error('Test account requires two-factor enrollment');
 
 	return res.body;
 };

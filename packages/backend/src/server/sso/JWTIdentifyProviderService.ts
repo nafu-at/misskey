@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
+import { legacyCredentialRotationKey } from '@/core/TwoFactorEnrollmentService.js';
 import { Inject, Injectable } from '@nestjs/common';
 import * as Redis from 'ioredis';
 import fastifyCors from '@fastify/cors';
@@ -15,14 +16,17 @@ import type {
 	UserProfilesRepository,
 	UsersRepository,
 } from '@/models/_.js';
-import type { MiLocalUser } from '@/models/User.js';
-import { CacheService } from '@/core/CacheService.js';
 import { LoggerService } from '@/core/LoggerService.js';
+import { enrollmentRequired } from '@/server/api/error.js';
 import { RoleService } from '@/core/RoleService.js';
 import { normalizeEmailAddress } from '@/misc/normalize-email-address.js';
 import { HtmlTemplateService } from '@/server/web/HtmlTemplateService.js';
 import { SsoPage } from '@/server/web/views/sso.js';
 import type { FastifyInstance } from 'fastify';
+
+function sessionId(loginToken: string, serviceId: string): string {
+	return createHmac('sha256', loginToken).update(serviceId).digest('base64url');
+}
 
 @Injectable()
 export class JWTIdentifyProviderService {
@@ -41,7 +45,6 @@ export class JWTIdentifyProviderService {
 		private userProfilesRepository: UserProfilesRepository,
 
 		private roleService: RoleService,
-		private cacheService: CacheService,
 		private loggerService: LoggerService,
 		private htmlTemplateService: HtmlTemplateService,
 	) {
@@ -145,10 +148,7 @@ export class JWTIdentifyProviderService {
 				return;
 			}
 
-			const user = await this.cacheService.localUserByNativeTokenCache.fetch(
-				token,
-				() => this.usersRepository.findOneBy({ token }) as Promise<MiLocalUser | null>,
-			);
+			const user = await this.usersRepository.findOneBy({ token });
 			if (!user) {
 				reply.status(403).send({
 					error: {
@@ -161,12 +161,16 @@ export class JWTIdentifyProviderService {
 				return;
 			}
 
+			if (await this.roleService.requiresTwoFactorEnrollment(user.id)) {
+				return reply.code(403).send({ error: enrollmentRequired });
+			}
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: user.id });
 			const isAdministrator = await this.roleService.isAdministrator(user);
 			const isModerator = await this.roleService.isModerator(user);
 			const roles = await this.roleService.getUserRoles(user.id);
 
 			const payload: JWTPayload = {
+				sid: sessionId(token, serviceId),
 				name: user.name ? `${user.name} (@${user.username})` : `@${user.username}`,
 				given_name: user.name ?? undefined,
 				family_name: `@${user.username}`,
@@ -304,6 +308,7 @@ export class JWTIdentifyProviderService {
 			}
 
 			try {
+				let claims: JWTPayload;
 				if (ssoServiceProvider.cipherAlgorithm) {
 					const key = ssoServiceProvider.privateKey
 						? await jose.importJWK(JSON.parse(ssoServiceProvider.privateKey), ssoServiceProvider.signatureAlgorithm)
@@ -314,8 +319,7 @@ export class JWTIdentifyProviderService {
 						audience: ssoServiceProvider.audience,
 					});
 
-					reply.status(200).send({ payload });
-					return;
+					claims = payload;
 				} else {
 					const key = ssoServiceProvider.publicKey.startsWith('{')
 						? await jose.importJWK(JSON.parse(ssoServiceProvider.publicKey), ssoServiceProvider.signatureAlgorithm)
@@ -326,9 +330,20 @@ export class JWTIdentifyProviderService {
 						audience: ssoServiceProvider.audience,
 					});
 
-					reply.status(200).send({ payload });
-					return;
+					claims = payload;
 				}
+				if (claims.sub) {
+					if (await this.roleService.requiresTwoFactorEnrollment(claims.sub)) {
+						return reply.code(403).send({ error: enrollmentRequired });
+					}
+					if (claims.sid === undefined) {
+						if (await this.redisClient.exists(legacyCredentialRotationKey(claims.sub))) throw new Error('Session revoked');
+					} else {
+						const user = await this.usersRepository.findOne({ select: { token: true }, where: { id: claims.sub } });
+						if (!user?.token || claims.sid !== sessionId(user.token, serviceId)) throw new Error('Session revoked');
+					}
+				}
+				return reply.code(200).send({ payload: claims });
 			} catch (err) {
 				this.#logger.error('Failed to verify JWT', { error: err });
 				const traceableError = err as Error & { code?: string };

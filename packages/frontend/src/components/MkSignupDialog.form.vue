@@ -77,6 +77,7 @@ import { generateClientTransactionId, misskeyApi } from '@/utility/misskey-api.j
 import { instance } from '@/instance.js';
 import { i18n } from '@/i18n.js';
 import { login } from '@/accounts.js';
+import { enrollTwoFactor } from '@/utility/two-factor-enrollment.js';
 
 const props = withDefaults(defineProps<{
 	autoSet?: boolean;
@@ -229,8 +230,18 @@ async function onSubmit(): Promise<void> {
 			});
 			emit('signupEmailPending');
 		} else {
-			const resJson = (await res.json()) as Misskey.entities.SignupResponse;
-			if (_DEV_) console.log(resJson);
+			const response = await res.json() as Misskey.Endpoints['signup']['res'];
+			let resJson: Misskey.entities.SignupResponse;
+			if ('ticket' in response) {
+				const result = await enrollTwoFactor(response);
+				if (!result) {
+					window.location.assign('/?required2fa=1');
+					return;
+				}
+				resJson = { ...await misskeyApi<Misskey.entities.MeDetailed>('i', {}, result.i), token: result.i };
+			} else {
+				resJson = response;
+			}
 
 			emit('signup', resJson);
 

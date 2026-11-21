@@ -166,7 +166,7 @@ export class SigninWithPasskeyApiService {
 		const profile = await this.userProfilesRepository.findOneByOrFail({ userId: user.id });
 
 		// Authentication was successful, but passwordless login is not enabled
-		if (!profile.usePasswordLessLogin) {
+		if (!profile.twoFactorEnabled || !profile.usePasswordLessLogin) {
 			return await fail(user.id, 403, {
 				id: '2d84773e-f7b7-4d0b-8f72-bb69b584c912',
 			});

@@ -47,8 +47,7 @@ export class AuthenticateService implements OnApplicationShutdown {
 		}
 
 		if (isNativeUserToken(token)) {
-			const user = await this.cacheService.localUserByNativeTokenCache.fetch(token,
-				() => this.usersRepository.findOneBy({ token }) as Promise<MiLocalUser | null>);
+			const user = await this.usersRepository.findOneBy({ token }) as MiLocalUser | null;
 
 			if (user == null) {
 				throw new AuthenticationError('user not found');

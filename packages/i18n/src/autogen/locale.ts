@@ -10133,6 +10133,14 @@ export interface Locale extends ILocale {
     };
     "_2fa": {
         /**
+         * このアカウントの利用には二要素認証の設定が必要です。
+         */
+        "enrollmentRequired": string;
+        /**
+         * 確認コードを確認してください。登録の有効期限が切れた場合は、ログインからやり直してください。
+         */
+        "enrollmentCodeInvalid": string;
+        /**
          * 既に設定は完了しています。
          */
         "alreadyRegistered": string;

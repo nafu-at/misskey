@@ -16,11 +16,10 @@ import type {
 	UserProfilesRepository,
 	UsersRepository,
 } from '@/models/_.js';
-import { CacheService } from '@/core/CacheService.js';
 import type { Config } from '@/config.js';
 import { LoggerService } from '@/core/LoggerService.js';
+import { enrollmentRequired } from '@/server/api/error.js';
 import { RoleService } from '@/core/RoleService.js';
-import type { MiLocalUser } from '@/models/User.js';
 import { bindThis } from '@/decorators.js';
 import { DI } from '@/di-symbols.js';
 import { normalizeEmailAddress } from '@/misc/normalize-email-address.js';
@@ -45,7 +44,6 @@ export class SAMLIdentifyProviderService {
 		private userProfilesRepository: UserProfilesRepository,
 
 		private roleService: RoleService,
-		private cacheService: CacheService,
 		private loggerService: LoggerService,
 		private htmlTemplateService: HtmlTemplateService,
 	) {
@@ -360,10 +358,7 @@ export class SAMLIdentifyProviderService {
 				return;
 			}
 
-			const user = await this.cacheService.localUserByNativeTokenCache.fetch(
-				token,
-				() => this.usersRepository.findOneBy({ token }) as Promise<MiLocalUser | null>,
-			);
+			const user = await this.usersRepository.findOneBy({ token });
 			if (!user) {
 				reply.status(403).send({
 					error: {
@@ -376,6 +371,9 @@ export class SAMLIdentifyProviderService {
 				return;
 			}
 
+			if (await this.roleService.requiresTwoFactorEnrollment(user.id)) {
+				return reply.code(403).send({ error: enrollmentRequired });
+			}
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: user.id });
 			const isAdministrator = await this.roleService.isAdministrator(user);
 			const isModerator = await this.roleService.isModerator(user);

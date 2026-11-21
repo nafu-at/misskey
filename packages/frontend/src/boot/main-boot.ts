@@ -10,7 +10,7 @@ import { common } from './common.js';
 import type { Component } from 'vue';
 import type { Keymap } from '@/utility/hotkey.js';
 import { i18n } from '@/i18n.js';
-import { alert, apiWithDialog, authenticateDialog, confirm, popup, popupAsyncWithDialog, post } from '@/os.js';
+import { alert, confirm, popup, post } from '@/os.js';
 import { useStream } from '@/stream.js';
 import * as sound from '@/utility/sound.js';
 import { $i } from '@/i.js';
@@ -25,7 +25,7 @@ import { mainRouter } from '@/router.js';
 import { makeHotkey } from '@/utility/hotkey.js';
 import { addCustomEmoji, removeCustomEmojis, updateCustomEmojis } from '@/custom-emojis.js';
 import { prefer } from '@/preferences.js';
-import { updateCurrentAccountPartial } from '@/accounts.js';
+import { requestTwoFactorSignin, updateCurrentAccountPartial } from '@/accounts.js';
 import { signout } from '@/signout.js';
 import { unisonReload } from '@/utility/unison-reload.js';
 import { isBirthday } from '@/utility/is-birthday.js';
@@ -95,27 +95,20 @@ export async function mainBoot() {
 		console.error('Failed to initialise the seasonal screen effect canvas context:', error);
 	}
 
+	if (new URLSearchParams(window.location.search).get('required2fa') === '1') {
+		window.history.replaceState(window.history.state, '', '/');
+		popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {
+			autoSet: true,
+			message: i18n.ts._2fa.enrollmentRequired,
+		}, {}, 'closed');
+	}
+
 	if ($i) {
 		store.loaded.then(async () => {
 			if (store.s.accountSetupWizard !== -1) {
 				await popup(defineAsyncComponent(() => import('@/components/MkUserSetupDialog.vue')), {}, {}, 'closed');
 			}
 		});
-
-		if ($i.policies.required2fa && !$i.twoFactorEnabled) {
-			const auth = await authenticateDialog();
-			if (!auth.canceled) {
-				const twoFactorData = await apiWithDialog('i/2fa/register', {
-					password: auth.result.password,
-					token: auth.result.token,
-				});
-				const { dispose } = await popupAsyncWithDialog(import('@/pages/settings/2fa.qrdialog.vue').then(x => x.default), {
-					twoFactorData,
-				}, {
-					closed: () => dispose(),
-				});
-			}
-		}
 
 		for (const announcement of ($i.unreadAnnouncements ?? []).filter(x => x.display === 'dialog')) {
 			await popup(defineAsyncComponent(() => import('@/components/MkAnnouncementDialog.vue')), {
@@ -304,7 +297,11 @@ export async function mainBoot() {
 		const stream = useStream();
 
 		let reloadDialogShowing = false;
-		stream.on('_disconnected_', async () => {
+		stream.on('_disconnected_', async event => {
+			if (event?.code === 1008 && event.reason === 'TWO_FACTOR_ENROLLMENT_REQUIRED' && $i) {
+				await requestTwoFactorSignin($i.token);
+				return;
+			}
 			if (prefer.s.serverDisconnectedBehavior === 'reload') {
 				window.location.reload();
 			} else if (prefer.s.serverDisconnectedBehavior === 'dialog') {

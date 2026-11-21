@@ -29,9 +29,12 @@ export class UserAuthService {
 	@bindThis
 	public async twoFactorAuthenticate(profile: MiUserProfile, token: string): Promise<void> {
 		if (profile.twoFactorBackupSecret?.includes(token)) {
-			await this.userProfilesRepository.update({ userId: profile.userId }, {
-				twoFactorBackupSecret: profile.twoFactorBackupSecret.filter((secret) => secret !== token),
-			});
+			const used = await this.userProfilesRepository.createQueryBuilder()
+				.update()
+				.set({ twoFactorBackupSecret: () => 'array_remove("twoFactorBackupSecret", :token)' })
+				.where('"userId" = :userId AND :token = ANY("twoFactorBackupSecret")', { userId: profile.userId, token })
+				.execute();
+			if (!used.affected) throw new IdentifiableError('7d0a7d85-206c-4d16-8cf3-8af92249a082', 'Two-factor authentication failed.');
 		} else {
 			if (!await this.validateOtp(profile.userId, profile.twoFactorSecret!, token)) {
 				throw new IdentifiableError('7d0a7d85-206c-4d16-8cf3-8af92249a082', 'Two-factor authentication failed.');
@@ -68,9 +71,7 @@ export class UserAuthService {
 			timestamp: now,
 		});
 
-		if (delta === null) {
-			throw new IdentifiableError('7d0a7d85-206c-4d16-8cf3-8af92249a082', 'Two-factor authentication failed.');
-		}
+		if (delta === null) return false;
 
 		// 4. totp.counter() を用い、同じタイムスタンプから基準ステップを取得
 		const currentStep = totp.counter({ timestamp: now });

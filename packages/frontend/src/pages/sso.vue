@@ -20,6 +20,7 @@ import MkAnimBg from '@/components/MkAnimBg.vue';
 import { definePage } from '@/page.js';
 import MkAuthConfirm from '@/components/MkAuthConfirm.vue';
 import { $i } from '@/i.js';
+import { reauthenticateConsentAccount } from '@/accounts.js';
 import { generateClientTransactionId } from '@/utility/misskey-api.js';
 
 const transactionIdMeta = window.document.querySelector<HTMLMetaElement>('meta[name="misskey:sso:transaction-id"]');
@@ -33,7 +34,7 @@ const prompt = window.document.querySelector<HTMLMetaElement>('meta[name="misske
 
 const authRoot = useTemplateRef('authRoot');
 
-async function onAccept(token: string) {
+async function onAccept(token: string, retry = true): Promise<void> {
 	const result = await window.fetch(`/sso/${kind}/authorize`, {
 		method: 'POST',
 		credentials: 'include',
@@ -45,7 +46,15 @@ async function onAccept(token: string) {
 			transaction_id: transactionIdMeta?.content,
 			login_token: token,
 		}),
-	}).then(res => res.json()).catch(() => {
+	}).then(async res => {
+		const body = await res.json();
+		if (res.ok) return body;
+		if (retry && body.error?.code === 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
+			const credential = await reauthenticateConsentAccount(token);
+			if (credential) return onAccept(credential, false);
+		}
+		authRoot.value?.showUI('failed');
+	}).catch(() => {
 		authRoot.value?.showUI('failed');
 	});
 

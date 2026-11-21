@@ -18,7 +18,7 @@ type AnyOf<T extends Record<PropertyKey, unknown>> = T[keyof T];
 
 export type StreamEvents = {
 	_connected_: void;
-	_disconnected_: void;
+	_disconnected_: { code: number; reason: string } | void;
 } & BroadcastEvents;
 
 export interface IStream extends EventEmitter<StreamEvents> {
@@ -153,10 +153,10 @@ export class Stream extends EventEmitter<StreamEvents> implements IStream {
 	/**
 	 * Callback of when close connection
 	 */
-	private onClose(): void {
+	private onClose(event: { code: number; reason: string }): void {
 		if (this.state === 'connected') {
 			this.state = 'reconnecting';
-			this.emit('_disconnected_');
+			this.emit('_disconnected_', { code: event.code, reason: event.reason });
 		}
 	}
 

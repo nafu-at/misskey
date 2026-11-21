@@ -151,7 +151,16 @@ export type SigninFlowRequest = {
 	'testcaptcha-response'?: string | null;
 };
 
-export type SigninFlowResponse = {
+export type TwoFactorEnrollment = {
+	finished: false;
+	next: 'enroll-2fa';
+	ticket: string;
+	qr: string;
+	url: string;
+	label: string;
+};
+
+export type SigninFlowResponse = TwoFactorEnrollment | {
 	finished: true;
 	id: User['id'];
 	i: string;

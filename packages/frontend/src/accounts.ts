@@ -59,7 +59,19 @@ export async function removeAccount(host: string, id: AccountWithToken['id']) {
 	prefer.commit('accounts', prefer.s.accounts.filter(x => x[0] !== host || x[1].id !== id));
 }
 
+let redirectingToEnrollment = false;
+
+export async function requestTwoFactorSignin(token: string) {
+	if (!$i || token !== $i.token || redirectingToEnrollment) return;
+	redirectingToEnrollment = true;
+	miLocalStorage.removeItem('account');
+	window.document.cookie = 'token=; max-age=0; path=/';
+	await removeAccount(host, $i.id);
+	unisonReload('/?required2fa=1');
+}
+
 const isAccountDeleted = Symbol('isAccountDeleted');
+const enrollmentRequired = Symbol('enrollmentRequired');
 
 async function removeAccountByToken(token: string) {
 	const entry = Object.entries(store.s.accountTokens).find(([, value]) => value === token);
@@ -95,6 +107,10 @@ function fetchAccount(token: string, id?: string, forceShowDialog?: boolean): Pr
 			}))
 			.then(async res => {
 				if ('error' in res) {
+					if (res.error.code === 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
+						await requestTwoFactorSignin(token);
+						return fail(enrollmentRequired);
+					}
 					if (res.error.id === 'a8c724b3-6e9c-4b46-b1a8-bc3ed6258370') {
 						// SUSPENDED
 						if (forceShowDialog || $i && (token === $i.token || id === $i.id)) {
@@ -186,8 +202,19 @@ export async function login(token: AccountWithToken['token'], redirect?: string)
 			await removeAccountByToken(token);
 		}
 		showing.value = false;
+		if (reason === enrollmentRequired) {
+			if ($i?.token !== token) {
+				const account = (await getAccounts()).find(account => account.token === token);
+				popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {
+					initialUsername: account?.username,
+					message: i18n.ts._2fa.enrollmentRequired,
+				}, { done: res => login(res.i, redirect) }, 'closed');
+			}
+			return null;
+		}
 		throw reason;
 	});
+	if (!me) return;
 
 	miLocalStorage.setItem('account', JSON.stringify({
 		...me,
@@ -331,9 +358,9 @@ export async function getAccountMenu(opts: {
 	return [...(opts.includeCurrentAccount ? [createItem(host, $i.id, $i.username, $i, $i.token)] : []), ...accountItems];
 }
 
-export function getAccountWithSigninDialog(): Promise<{ id: string, token: string } | null> {
+export function getAccountWithSigninDialog(initialUsername?: string): Promise<{ id: string, token: string } | null> {
 	return new Promise((resolve) => {
-		popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), {}, {
+		popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), { initialUsername }, {
 			done: async (res: Misskey.entities.SigninFlowResponse & { finished: true }) => {
 				const user = await fetchAccount(res.i, res.id, true);
 				await addAccount(host, user, res.i);
@@ -344,6 +371,17 @@ export function getAccountWithSigninDialog(): Promise<{ id: string, token: strin
 			},
 		}, 'closed');
 	});
+}
+
+export async function reauthenticateConsentAccount(token: string): Promise<string | null> {
+	if ($i?.token === token) {
+		await requestTwoFactorSignin(token);
+		return null;
+	}
+	const account = (await getAccounts()).find(entry => entry.token === token);
+	if (!account) return null;
+	const signedIn = await getAccountWithSigninDialog(account.username);
+	return signedIn?.id === account.id ? signedIn.token : null;
 }
 
 export function getAccountWithSignupDialog(): Promise<{ id: string, token: string } | null> {

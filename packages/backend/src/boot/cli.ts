@@ -27,11 +27,17 @@ switch (command) {
 	case 'help': {
 		console.log('Available commands:');
 		console.log('  help - Displays this help message');
+		console.log('  reset-root-mfa <root-account-id> - Reset the root account’s two-factor authentication');
 		console.log('  reset-captcha - Resets the captcha');
 		break;
 	}
 	case 'ping': {
 		await commandService.ping();
+		break;
+	}
+	case 'reset-root-mfa': {
+		await commandService.resetRootMfa(process.argv[3]);
+		console.log('Root two-factor authentication has been reset.');
 		break;
 	}
 	case 'reset-captcha': {

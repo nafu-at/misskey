@@ -5,8 +5,9 @@
 
 import bcrypt from 'bcryptjs';
 import * as OTPAuth from 'otpauth';
-import * as QRCode from 'qrcode';
 import { Inject, Injectable } from '@nestjs/common';
+import { IsNull } from 'typeorm';
+import { totpRegistrationData } from '@/core/TwoFactorEnrollmentService.js';
 import type { UserProfilesRepository } from '@/models/_.js';
 import { Endpoint } from '@/server/api/endpoint-base.js';
 import { DI } from '@/di-symbols.js';
@@ -87,27 +88,15 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			// Generate user's secret key
 			const secret = new OTPAuth.Secret();
 
-			await this.userProfilesRepository.update(me.id, {
-				twoFactorTempSecret: secret.base32,
-			});
+			const issued = await this.userProfilesRepository.update({
+				userId: me.id,
+				password: profile.password ?? IsNull(),
+				twoFactorEnabled: profile.twoFactorEnabled,
+				twoFactorSecret: profile.twoFactorSecret ?? IsNull(),
+			}, { twoFactorTempSecret: secret.base32 });
+			if (!issued.affected) throw new ApiError(meta.errors.authenticationFailed);
 
-			// Get the data URL of the authenticator URL
-			const totp = new OTPAuth.TOTP({
-				secret,
-				digits: 6,
-				label: me.username,
-				issuer: this.config.host,
-			});
-			const url = totp.toString();
-			const qr = await QRCode.toDataURL(url);
-
-			return {
-				qr,
-				url,
-				secret: secret.base32,
-				label: me.username,
-				issuer: this.config.host,
-			};
+			return totpRegistrationData(secret, me.username, this.config.host);
 		});
 	}
 }

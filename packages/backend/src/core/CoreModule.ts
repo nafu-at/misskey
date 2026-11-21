@@ -65,6 +65,7 @@ import { UserListService } from './UserListService.js';
 import { UserMutingService } from './UserMutingService.js';
 import { UserRenoteMutingService } from './UserRenoteMutingService.js';
 import { UserSuspendService } from './UserSuspendService.js';
+import { TwoFactorEnrollmentService } from './TwoFactorEnrollmentService.js';
 import { UserAuthService } from './UserAuthService.js';
 import { VideoProcessingService } from './VideoProcessingService.js';
 import { UserWebhookService } from './UserWebhookService.js';
@@ -368,6 +369,7 @@ const $ApQuestionService: Provider = { provide: 'ApQuestionService', useExisting
 		UserRenoteMutingService,
 		UserSearchService,
 		UserSuspendService,
+		TwoFactorEnrollmentService,
 		UserAuthService,
 		VideoProcessingService,
 		UserWebhookService,
@@ -672,6 +674,7 @@ const $ApQuestionService: Provider = { provide: 'ApQuestionService', useExisting
 		UserRenoteMutingService,
 		UserSearchService,
 		UserSuspendService,
+		TwoFactorEnrollmentService,
 		UserAuthService,
 		VideoProcessingService,
 		UserWebhookService,

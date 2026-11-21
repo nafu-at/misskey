@@ -3,19 +3,33 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import * as OTPAuth from 'otpauth';
+import { generateBackupCodes } from '@/core/TwoFactorEnrollmentService.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { Endpoint } from '@/server/api/endpoint-base.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import type { UserProfilesRepository } from '@/models/_.js';
 import { GlobalEventService } from '@/core/GlobalEventService.js';
 import { DI } from '@/di-symbols.js';
-import { UserAuthService } from "@/core/UserAuthService.js";
+import { UserAuthService } from '@/core/UserAuthService.js';
+import { ApiError } from '@/server/api/error.js';
 
 export const meta = {
 	requireCredential: true,
 
 	secure: true,
+
+	errors: {
+		invalidCode: {
+			message: 'Invalid or already used authentication code.',
+			code: 'INVALID_TWO_FACTOR_CODE',
+			id: '4b27fc5c-d941-459f-bf7c-d61324cb71bc',
+		},
+		invalidRegistration: {
+			message: 'Two-factor registration has expired or changed. Please start again.',
+			code: 'INVALID_TWO_FACTOR_REGISTRATION',
+			id: '4b27fc5c-41fd-4462-ac2f-b05fcd306ded',
+		},
+	},
 
 	res: {
 		type: 'object',
@@ -55,20 +69,23 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: me.id });
 
 			if (profile.twoFactorTempSecret == null) {
-				throw new Error('二段階認証の設定が開始されていません');
+				throw new ApiError(meta.errors.invalidRegistration);
 			}
 
 			if (!await this.userAuthService.validateOtp(profile.userId, profile.twoFactorTempSecret, token)) {
-				throw new Error('not verified');
+				throw new ApiError(meta.errors.invalidCode);
 			}
 
-			const backupCodes = Array.from({ length: 20 }, () => new OTPAuth.Secret().base32);
+			const backupCodes = generateBackupCodes();
 
-			await this.userProfilesRepository.update(me.id, {
+			const update = await this.userProfilesRepository.update({ userId: me.id, twoFactorTempSecret: profile.twoFactorTempSecret }, {
 				twoFactorSecret: profile.twoFactorTempSecret,
+				twoFactorTempSecret: null,
 				twoFactorBackupSecret: backupCodes,
 				twoFactorEnabled: true,
 			});
+
+			if (!update.affected) throw new ApiError(meta.errors.invalidRegistration);
 
 			// Publish meUpdated event
 			this.globalEventService.publishMainStream(me.id, 'meUpdated', await this.userEntityService.pack(me.id, me, {

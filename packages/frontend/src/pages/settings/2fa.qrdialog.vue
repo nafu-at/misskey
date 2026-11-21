@@ -25,6 +25,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<div style="height: 100cqh; overflow: auto; text-align: center;">
 					<div class="_spacer" style="--MI_SPACER-min: 20px; --MI_SPACER-max: 28px;">
 						<div class="_gaps">
+							<MkInfo v-if="enrollment">{{ i18n.ts._2fa.enrollmentRequired }}</MkInfo>
 							<MkInfo>
 								<Mfm :text="i18n.tsx._2fa.detailedGuide({ link: `[${i18n.ts.here}](https://misskey-hub.net/docs/for-users/stepped-guides/how-to-enable-2fa/)`})"/>
 							</MkInfo>
@@ -39,7 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 							</I18n>
 							<div>{{ i18n.ts._2fa.step2 }}</div>
 							<div>
-								<a :class="$style.qrRoot" :href="twoFactorData.url"><img :class="$style.qr" :src="twoFactorData.qr"></a>
+								<a :class="$style.qrRoot" :href="twoFactorData.url"><img :alt="i18n.ts._2fa.step2" :class="$style.qr" :src="twoFactorData.qr"></a>
 								<!-- QRコード側にマージンが入っているので直下でOK -->
 								<div><MkButton inline rounded type="routerLink" :to="twoFactorData.url" :linkBehavior="'browser'">{{ i18n.ts.launchApp }}</MkButton></div>
 							</div>
@@ -59,13 +60,15 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<div style="height: 100cqh; overflow: auto;">
 					<div class="_spacer" style="--MI_SPACER-min: 20px; --MI_SPACER-max: 28px;">
 						<div class="_gaps">
-							<div>{{ i18n.ts._2fa.step3Title }}</div>
-							<MkInput v-model="token" autocomplete="one-time-code" inputmode="numeric"></MkInput>
+							<label>
+								{{ i18n.ts._2fa.step3Title }}
+								<MkInput v-model="token" autocomplete="one-time-code" inputmode="numeric"></MkInput>
+							</label>
 							<div>{{ i18n.ts._2fa.step3 }}</div>
 						</div>
 						<div class="_buttonsCenter" style="margin-top: 16px;">
-							<MkButton rounded @click="page--"><i class="ti ti-arrow-left"></i> {{ i18n.ts.goBack }}</MkButton>
-							<MkButton primary rounded gradate @click="tokenDone">{{ i18n.ts.continue }} <i class="ti ti-arrow-right"></i></MkButton>
+							<MkButton rounded :disabled="submitting" @click="page--"><i class="ti ti-arrow-left"></i> {{ i18n.ts.goBack }}</MkButton>
+							<MkButton primary rounded gradate :disabled="submitting || !token" @click="tokenDone">{{ i18n.ts.continue }} <i class="ti ti-arrow-right"></i></MkButton>
 						</div>
 					</div>
 				</div>
@@ -116,11 +119,11 @@ import * as config from '@@/js/config.js';
 import MkFolder from '@/components/MkFolder.vue';
 import MkInfo from '@/components/MkInfo.vue';
 import { confetti } from '@/utility/confetti.js';
-import { ensureSignin } from '@/i.js';
+import { $i } from '@/i.js';
+import type { entities } from 'misskey-js';
 
-const $i = ensureSignin();
-
-defineProps<{
+const props = defineProps<{
+	enrollment?: entities.TwoFactorEnrollment;
 	twoFactorData: {
 		qr: string;
 		url: string;
@@ -129,6 +132,7 @@ defineProps<{
 
 const emit = defineEmits<{
 	(ev: 'closed'): void;
+	(ev: 'enrolled', result: { finished: true; id: string; i: string }): void;
 }>();
 
 const dialog = useTemplateRef('dialog');
@@ -136,20 +140,36 @@ const page = ref(0);
 const token = ref<string | null>(null);
 const backupCodes = ref<string[]>();
 
+const submitting = ref(false);
+let credentials: { finished: true; id: string; i: string } | undefined;
+
 function cancel() {
+	if (submitting.value) return;
 	if (page.value !== 2) dialog.value?.close();
 	else allDone();
 }
 
 async function tokenDone() {
-	if (token.value == null) return;
-	const res = await os.apiWithDialog('i/2fa/done', {
-		token: token.value.toString(), // 実装ミスなどでnumberが入る可能性を払拭できないため念のためtoString
-	});
+	if (token.value == null || submitting.value) return;
+	submitting.value = true;
+	try {
+		const code = String(token.value).trim();
+		if (props.enrollment) {
+			const res = await os.apiWithDialog('signin-enroll-2fa', { ticket: props.enrollment.ticket, code }, null, {
+				'b9655041-7b6f-4957-88bd-7e0666d2dc27': { text: i18n.ts._2fa.enrollmentCodeInvalid },
+			});
+			credentials = { finished: true, id: res.id, i: res.i };
+			backupCodes.value = res.backupCodes;
+		} else {
+			backupCodes.value = (await os.apiWithDialog('i/2fa/done', { token: code })).backupCodes;
+		}
+	} catch {
+		return; // apiWithDialog displays the error and the user can retry.
+	} finally {
+		submitting.value = false;
+	}
 
-	backupCodes.value = res.backupCodes;
-
-	page.value++;
+	page.value = 2;
 
 	confetti({
 		duration: 1000 * 3,
@@ -161,7 +181,7 @@ function downloadBackupCodes() {
 		const txtBlob = new Blob([backupCodes.value.reduce((acc, code, i) => `${acc}#${i + 1}. ${code}\r\n`, `${config.hostname} 2FA Backup Codes\r\n\r\n`)], { type: 'text/plain' });
 		const dummya = window.document.createElement('a');
 		dummya.href = URL.createObjectURL(txtBlob);
-		dummya.download = `${config.hostname}-${$i.username}@${hostname}` + (port !== '' ? `_${port}` : '') + '-2fa-backup-codes.txt';
+		dummya.download = `${config.hostname}-${props.enrollment?.label ?? $i?.username ?? ''}@${hostname}` + (port !== '' ? `_${port}` : '') + '-2fa-backup-codes.txt';
 		dummya.click();
 	}
 }
@@ -178,6 +198,7 @@ async function allDone() {
 	});
 
 	if (canceled) return;
+	if (credentials) emit('enrolled', credentials);
 
 	dialog.value?.close();
 }

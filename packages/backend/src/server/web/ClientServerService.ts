@@ -264,7 +264,7 @@ export class ClientServerService {
 					return;
 				}
 				const isAdministrator = await this.roleService.isAdministrator(user);
-				if (!isAdministrator) {
+				if (!isAdministrator || await this.roleService.requiresTwoFactorEnrollment(user.id)) {
 					reply.code(403).send('Access denied');
 					return;
 				}

@@ -4,13 +4,11 @@
  */
 
 import { Inject, Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import { Endpoint } from '@/server/api/endpoint-base.js';
 import { ApiError } from '@/server/api/error.js';
-import { MiUserProfile } from '@/models/UserProfile.js';
-import { MiUserSecurityKey } from '@/models/UserSecurityKey.js';
 import type { UsersRepository } from '@/models/_.js';
 import { DI } from '@/di-symbols.js';
+import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { RoleService } from '@/core/RoleService.js';
 import { ModerationLogService } from '@/core/ModerationLogService.js';
 
@@ -46,13 +44,11 @@ export const paramDef = {
 @Injectable()
 export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-disable-line import/no-default-export
 	constructor(
-		@Inject(DI.db)
-		private db: DataSource,
-
 		@Inject(DI.usersRepository)
 		private usersRepository: UsersRepository,
 
 		private roleService: RoleService,
+		private enrollment: TwoFactorEnrollmentService,
 		private moderationLogService: ModerationLogService,
 	) {
 		super(meta, paramDef, async (ps, me) => {
@@ -66,23 +62,14 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 				throw new ApiError(meta.errors.accessDenied);
 			}
 
-			await this.db.transaction(async (transactionalEntityManager) => {
-				// パスキーを全て削除
-				await transactionalEntityManager.delete(MiUserSecurityKey, { userId: user.id });
-
-				// TOTP・パスワードレスログインを無効化
-				await transactionalEntityManager.update(MiUserProfile, { userId: user.id }, {
-					twoFactorSecret: null,
-					twoFactorBackupSecret: null,
-					twoFactorEnabled: false,
-					usePasswordLessLogin: false,
-				});
-			}).then(() => {
-				this.moderationLogService.log(me, 'unsetMfa', {
-					userId: user.id,
-					userUsername: user.username,
-					userHost: user.host,
-				});
+			if (me.id === user.id && (await this.roleService.getUserPolicies(user.id)).required2fa) {
+				throw new ApiError(meta.errors.accessDenied);
+			}
+			await this.enrollment.reset(user.id);
+			await this.moderationLogService.log(me, 'unsetMfa', {
+				userId: user.id,
+				userUsername: user.username,
+				userHost: user.host,
 			});
 		});
 	}

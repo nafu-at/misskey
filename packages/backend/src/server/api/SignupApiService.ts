@@ -22,6 +22,7 @@ import { bindThis } from '@/decorators.js';
 import { L_CHARS, secureRndstr } from '@/misc/secure-rndstr.js';
 import { LoggerService } from '@/core/LoggerService.js';
 import { envOption } from '@/env.js';
+import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { SigninService } from './SigninService.js';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
@@ -55,6 +56,7 @@ export class SignupApiService {
 		private captchaService: CaptchaService,
 		private signupService: SignupService,
 		private signinService: SigninService,
+		private enrollment: TwoFactorEnrollmentService,
 		private emailService: EmailService,
 		private queueService: QueueService,
 	) {
@@ -243,7 +245,7 @@ export class SignupApiService {
 			return;
 		} else {
 			try {
-				const { account, secret } = await this.signupService.signup({
+				const { account, secret, passwordHash } = await this.signupService.signup({
 					username, password, host,
 				});
 
@@ -262,6 +264,11 @@ export class SignupApiService {
 				}
 
 				logger.info('Successfully created user.', { userId: account.id });
+				const enrollment = await this.enrollment.begin(account, passwordHash);
+				if (enrollment) {
+					reply.header('Cache-Control', 'no-store');
+					return enrollment;
+				}
 				return {
 					...res,
 					token: secret,
@@ -320,6 +327,11 @@ export class SignupApiService {
 			}
 
 			logger.info('Successfully created user.', { userId: account.id });
+			const enrollment = await this.enrollment.begin(account, pendingUser.password);
+			if (enrollment) {
+				reply.header('Cache-Control', 'no-store');
+				return enrollment;
+			}
 			return this.signinService.signin(request, reply, account as MiLocalUser);
 		} catch (err) {
 			logger.error('Failed to complete creating user account.', { error: err });

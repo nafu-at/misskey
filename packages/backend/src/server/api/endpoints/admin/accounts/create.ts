@@ -46,7 +46,7 @@ export const meta = {
 				properties: {
 					token: {
 						type: 'string',
-						optional: false, nullable: false,
+						optional: false, nullable: true,
 					},
 				},
 			}
@@ -109,9 +109,9 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 			const res = await this.userEntityService.pack(account, account, {
 				schema: 'MeDetailed',
 				includeSecrets: true,
-			}) as Packed<'MeDetailed'> & { token: string };
+			}) as Packed<'MeDetailed'> & { token: string | null };
 
-			res.token = secret;
+			res.token = await this.roleService.requiresTwoFactorEnrollment(account.id) ? null : secret;
 
 			return res;
 		});

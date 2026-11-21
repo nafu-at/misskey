@@ -173,8 +173,9 @@ export class SignupService {
 			this.userService.notifySystemWebhook(account, 'userCreated');
 
 			if (this.meta.rootUserId == null) {
-			await this.metaService.update({ rootUserId: account.id });
-		} return { account, secret };
+				await this.metaService.update({ rootUserId: account.id });
+			}
+			return { account, secret, passwordHash: hash ?? null };
 		} catch (err) {
 			this.logger.error(`Failed to create account ${username}`, { error: err });
 			throw err;

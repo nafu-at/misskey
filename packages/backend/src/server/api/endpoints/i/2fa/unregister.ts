@@ -11,6 +11,7 @@ import type { UserProfilesRepository } from '@/models/_.js';
 import { GlobalEventService } from '@/core/GlobalEventService.js';
 import { DI } from '@/di-symbols.js';
 import { ApiError } from '@/server/api/error.js';
+import { RoleService } from '@/core/RoleService.js';
 import { UserAuthService } from '@/core/UserAuthService.js';
 
 export const meta = {
@@ -19,6 +20,12 @@ export const meta = {
 	secure: true,
 
 	errors: {
+		requiredByRole: {
+			message: 'Your role requires two-factor authentication.',
+			code: 'TWO_FACTOR_REQUIRED_BY_ROLE',
+			kind: 'permission',
+			id: '0d549d1f-735a-45b7-bd53-cc6f7fa48650',
+		},
 		incorrectPassword: {
 			message: 'Incorrect password.',
 			code: 'INCORRECT_PASSWORD',
@@ -50,9 +57,13 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 
 		private userEntityService: UserEntityService,
 		private userAuthService: UserAuthService,
+		private roleService: RoleService,
 		private globalEventService: GlobalEventService,
 	) {
 		super(meta, paramDef, async (ps, me) => {
+			if ((await this.roleService.getUserPolicies(me.id)).required2fa) {
+				throw new ApiError(meta.errors.requiredByRole);
+			}
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: me.id });
 
 			const passwordMatched = await bcrypt.compare(ps.password, profile.password ?? '');
@@ -71,6 +82,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 
 			await this.userProfilesRepository.update(me.id, {
 				twoFactorSecret: null,
+				twoFactorTempSecret: null,
 				twoFactorBackupSecret: null,
 				twoFactorEnabled: false,
 				usePasswordLessLogin: false,

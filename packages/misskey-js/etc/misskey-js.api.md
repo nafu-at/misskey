@@ -1417,11 +1417,23 @@ export type Endpoints = Overwrite<Endpoints_2, {
     };
     'signup': {
         req: SignupRequest;
-        res: SignupResponse;
+        res: SignupResponse | TwoFactorEnrollment;
     };
     'signup-pending': {
         req: SignupPendingRequest;
-        res: SignupPendingResponse;
+        res: SignupPendingResponse | TwoFactorEnrollment;
+    };
+    'signin-enroll-2fa': {
+        req: {
+            ticket: string;
+            code: string;
+        };
+        res: {
+            finished: true;
+            id: string;
+            i: string;
+            backupCodes: string[];
+        };
     };
     'signin-flow': {
         req: SigninFlowRequest;
@@ -1486,6 +1498,7 @@ declare namespace entities {
         SignupPendingRequest,
         SignupPendingResponse,
         SigninFlowRequest,
+        TwoFactorEnrollment,
         SigninFlowResponse,
         SigninWithPasskeyRequest,
         SigninWithPasskeyInitResponse,
@@ -3850,7 +3863,7 @@ export type SigninFlowRequest = {
 };
 
 // @public (undocumented)
-export type SigninFlowResponse = {
+export type SigninFlowResponse = TwoFactorEnrollment | {
     finished: true;
     id: User['id'];
     i: string;
@@ -3950,7 +3963,10 @@ export class Stream extends EventEmitter<StreamEvents> implements IStream {
 // @public (undocumented)
 export type StreamEvents = {
     _connected_: void;
-    _disconnected_: void;
+    _disconnected_: {
+        code: number;
+        reason: string;
+    } | void;
 } & BroadcastEvents;
 
 // Warning: (ae-forgotten-export) The symbol "SwitchCase" needs to be exported by the entry point index.d.ts
@@ -3993,6 +4009,16 @@ export type TestResponse = operations['test']['responses']['200']['content']['ap
 // @public (undocumented)
 function toString_2(acct: Acct): string;
 export { toString_2 as toString }
+
+// @public (undocumented)
+export type TwoFactorEnrollment = {
+    finished: false;
+    next: 'enroll-2fa';
+    ticket: string;
+    qr: string;
+    url: string;
+    label: string;
+};
 
 // @public (undocumented)
 export type UrlProvider = string | (() => string) | (() => Promise<string>);

@@ -119,7 +119,7 @@ import { ref, computed } from 'vue';
 import * as Misskey from 'misskey-js';
 import MkButton from '@/components/MkButton.vue';
 import { $i } from '@/i.js';
-import { getAccounts, getAccountWithSigninDialog, getAccountWithSignupDialog } from '@/accounts.js';
+import { getAccounts, getAccountWithSigninDialog, getAccountWithSignupDialog, reauthenticateConsentAccount } from '@/accounts.js';
 import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
 import { getProxiedImageUrl } from '@/utility/media-proxy.js';
@@ -162,7 +162,7 @@ async function init() {
 	if (accountIdsToFetch.length > 0) {
 		const usersRes = await misskeyApi('users/show', {
 			userIds: accountIdsToFetch,
-		});
+		}, null);
 
 		for (const user of usersRes) {
 			if (users.value.has(user.id)) continue;
@@ -244,10 +244,22 @@ async function clickAccept() {
 
 	const user = users.value.get(selectedUser.value)!;
 
-	const token = user.token;
-
 	waiting.value = true;
-	emit('accept', token);
+	try {
+		await misskeyApi('i', {}, user.token);
+	} catch (error) {
+		if ((error as Misskey.api.APIError).code !== 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
+			showUI('failed');
+			return;
+		}
+		const token = await reauthenticateConsentAccount(user.token);
+		if (!token) {
+			waiting.value = false;
+			return;
+		}
+		user.token = token;
+	}
+	emit('accept', user.token);
 }
 
 function showUI(state: 'success' | 'denied' | 'failed') {

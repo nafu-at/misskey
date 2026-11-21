@@ -28,7 +28,9 @@ import { DI } from '@/di-symbols.js';
 import { bindThis } from '@/decorators.js';
 import type { AccessTokensRepository, IndieAuthClientsRepository, UserProfilesRepository, UsersRepository } from '@/models/_.js';
 import { IdService } from '@/core/IdService.js';
-import { CacheService } from '@/core/CacheService.js';
+import { RoleService } from '@/core/RoleService.js';
+import { legacyCredentialRotationKey, tokenFingerprint } from '@/core/TwoFactorEnrollmentService.js';
+import { MiUser, MiAccessToken } from '@/models/_.js';
 import type { MiLocalUser } from '@/models/User.js';
 import { LoggerService } from '@/core/LoggerService.js';
 import Logger from '@/logger.js';
@@ -132,6 +134,7 @@ interface AuthorizationTransaction {
 }
 
 interface AuthorizationCodeGrant {
+	credential?: string;
 	clientId: string;
 	userId: string;
 	redirectUri: string;
@@ -413,7 +416,7 @@ export class OAuth2ProviderService {
 		private usersRepository: UsersRepository,
 		private idService: IdService,
 		private httpRequestService: HttpRequestService,
-		private cacheService: CacheService,
+		private roleService: RoleService,
 		private htmlTemplateService: HtmlTemplateService,
 		loggerService: LoggerService,
 	) {
@@ -505,12 +508,12 @@ export class OAuth2ProviderService {
 	}
 
 	async #findUserByLoginToken(loginToken: string): Promise<MiLocalUser> {
-		const user = await this.cacheService.localUserByNativeTokenCache.fetch(loginToken,
-			() => this.usersRepository.findOneBy({ token: loginToken }) as Promise<MiLocalUser | null>);
+		const user = await this.usersRepository.findOneBy({ token: loginToken }) as MiLocalUser | null;
 		if (!user) {
 			throw new InvalidRequestError('No such user');
 		}
 
+		if (await this.roleService.requiresTwoFactorEnrollment(user.id)) throw createForbiddenAccessDenied('Two-factor enrollment is required');
 		return user;
 	}
 
@@ -626,6 +629,7 @@ export class OAuth2ProviderService {
 				await this.redisClient.set(`oauth2:authorization:${code}`, JSON.stringify({
 					clientId: transaction.client.id,
 					userId: user.id,
+					credential: tokenFingerprint(loginToken),
 					redirectUri: transaction.request.redirectUri,
 					codeChallenge: transaction.request.codeChallenge,
 					scopes: transaction.request.scopes,
@@ -680,6 +684,10 @@ export class OAuth2ProviderService {
 				return;
 			}
 
+			if (await this.roleService.requiresTwoFactorEnrollment(user.id)) {
+				reply.code(403);
+				return;
+			}
 			const profile = await this.userProfilesRepository.findOneByOrFail({ userId: user.id });
 
 			reply.code(200);
@@ -713,7 +721,7 @@ export class OAuth2ProviderService {
 			const accessToken = await this.accessTokensRepository.findOne({ where: { token }, relations: { user: true } });
 			reply.code(200);
 
-			if (!accessToken) return { active: false };
+			if (!accessToken || await this.roleService.requiresTwoFactorEnrollment(accessToken.userId)) return { active: false };
 			return {
 				active: true,
 				me: accessToken.user ? `${this.config.url}/@${accessToken.user.username}` : undefined,
@@ -782,14 +790,28 @@ export class OAuth2ProviderService {
 				const now = new Date();
 
 				// NOTE: we don't have a setup for automatic token expiration
-				await this.accessTokensRepository.insert({
-					id: this.idService.gen(now.getTime()),
-					lastUsedAt: now,
-					userId: granted.userId,
-					token: accessToken,
-					hash: accessToken,
-					name: granted.clientId,
-					permission: granted.scopes,
+				const policies = await this.roleService.getUserPolicies(granted.userId);
+				await this.accessTokensRepository.manager.transaction(async manager => {
+					const user = await manager.findOne(MiUser, { where: { id: granted.userId }, lock: { mode: 'pessimistic_read' } });
+					if (!user?.token) throw new InvalidGrantError();
+					const stale = granted.credential === undefined
+						? await this.redisClient.exists(legacyCredentialRotationKey(user.id))
+						: granted.credential !== tokenFingerprint(user.token);
+					if (stale) {
+						throw new InvalidGrantError();
+					}
+					if (await this.roleService.requiresTwoFactorEnrollment(user.id, policies, manager)) {
+						throw new InvalidGrantError();
+					}
+					await manager.insert(MiAccessToken, {
+						id: this.idService.gen(now.getTime()),
+						lastUsedAt: now,
+						userId: granted.userId,
+						token: accessToken,
+						hash: accessToken,
+						name: granted.clientId,
+						permission: granted.scopes,
+					});
 				});
 
 				// トークンを共有してから失効を確認し、並行した再利用を取りこぼさない。

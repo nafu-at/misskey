@@ -17,6 +17,10 @@ import { bindThis } from '@/decorators.js';
 import endpoints from './endpoints.js';
 import { ApiCallService } from './ApiCallService.js';
 import { SignupApiService } from './SignupApiService.js';
+import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
+import { RoleService } from '@/core/RoleService.js';
+import { SigninService } from './SigninService.js';
+import type { MiLocalUser } from '@/models/User.js';
 import { SigninApiService } from './SigninApiService.js';
 import { SigninWithPasskeyApiService } from './SigninWithPasskeyApiService.js';
 import { decideCorsOptions } from './cors-decision.js';
@@ -40,6 +44,9 @@ export class ApiServerService {
 		private apiCallService: ApiCallService,
 		private signupApiService: SignupApiService,
 		private signinApiService: SigninApiService,
+		private enrollment: TwoFactorEnrollmentService,
+		private roleService: RoleService,
+		private signinService: SigninService,
 		private signinWithPasskeyApiService: SigninWithPasskeyApiService,
 	) {
 		//this.createServer = this.createServer.bind(this);
@@ -163,6 +170,17 @@ export class ApiServerService {
 			(request, reply) => this.signupApiService.signupPending(request, reply),
 		);
 
+		fastify.post<{ Body: { ticket: string; code: string } }>('/signin-enroll-2fa', {
+			schema: { body: { type: 'object', required: ['ticket', 'code'], properties: {
+				ticket: { type: 'string', pattern: '^[a-f0-9]{64}$' }, code: { type: 'string', pattern: '^[0-9]{6}$' },
+			} } },
+		}, async (request, reply) => {
+			reply.header('Cache-Control', 'no-store');
+			const result = await this.enrollment.complete(request.body.ticket, request.body.code);
+			if (!result) return reply.code(403).send({ error: { code: 'INVALID_ENROLLMENT', id: 'b9655041-7b6f-4957-88bd-7e0666d2dc27', message: 'Invalid or expired enrollment or code.' } });
+			return { ...this.signinService.signin(request, reply, result.user as MiLocalUser), backupCodes: result.backupCodes };
+		});
+
 		fastify.get('/v1/instance/peers', async (request, reply) => {
 			const instances = await this.instancesRepository.find({
 				select: { host: true },
@@ -179,10 +197,9 @@ export class ApiServerService {
 				session: request.params.session,
 			});
 
-			if (token && token.session != null && !token.fetched) {
-				this.accessTokensRepository.update(token.id, {
-					fetched: true,
-				});
+			if (token && token.session != null && !token.fetched && !await this.roleService.requiresTwoFactorEnrollment(token.userId)) {
+				const claimed = await this.accessTokensRepository.update({ id: token.id, fetched: false }, { fetched: true });
+				if (!claimed.affected) return { ok: false };
 
 				return {
 					ok: true,

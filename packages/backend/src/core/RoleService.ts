@@ -28,6 +28,7 @@ import { CacheService } from '@/core/CacheService.js';
 import type { RoleCondFormulaValue } from '@/models/Role.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import type { GlobalEvents } from '@/core/GlobalEventService.js';
+import { MiUserProfile } from '@/models/UserProfile.js';
 import { GlobalEventService } from '@/core/GlobalEventService.js';
 import { IdService } from '@/core/IdService.js';
 import { ModerationLogService } from '@/core/ModerationLogService.js';
@@ -439,6 +440,11 @@ export class RoleService implements OnApplicationShutdown, OnModuleInit {
 				displayOrder: r.displayOrder,
 				behavior: r.badgeBehavior ?? undefined,
 			}));
+	}
+
+	public async requiresTwoFactorEnrollment(userId: string, policies?: RolePolicies, manager = this.usersRepository.manager): Promise<boolean> {
+		if (!(policies ?? await this.getUserPolicies(userId)).required2fa) return false;
+		return !await manager.existsBy(MiUserProfile, { userId, twoFactorEnabled: true });
 	}
 
 	@bindThis

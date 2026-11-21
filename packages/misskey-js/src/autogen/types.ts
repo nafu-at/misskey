@@ -6850,7 +6850,7 @@ export interface operations {
                 };
                 content: {
                     'application/json': components['schemas']['MeDetailed'] & {
-                        token: string;
+                        token: string | null;
                     };
                 };
             };

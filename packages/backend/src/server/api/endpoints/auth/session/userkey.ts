@@ -4,6 +4,7 @@
  */
 
 import { Inject, Injectable } from '@nestjs/common';
+import { RoleService } from '@/core/RoleService.js';
 import { Endpoint } from '@/server/api/endpoint-base.js';
 import type { AppsRepository, AccessTokensRepository, AuthSessionsRepository } from '@/models/_.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
@@ -75,6 +76,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 		private accessTokensRepository: AccessTokensRepository,
 
 		private userEntityService: UserEntityService,
+		private roleService: RoleService,
 	) {
 		super(meta, paramDef, async (ps, me) => {
 			// Lookup app
@@ -96,18 +98,20 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 				throw new ApiError(meta.errors.noSuchSession);
 			}
 
-			if (session.userId == null) {
+			if (session.userId == null || await this.roleService.requiresTwoFactorEnrollment(session.userId)) {
 				throw new ApiError(meta.errors.pendingSession);
 			}
 
 			// Lookup access token
-			const accessToken = await this.accessTokensRepository.findOneByOrFail({
+			const accessToken = await this.accessTokensRepository.findOneBy({
 				appId: app.id,
 				userId: session.userId,
 			});
 
-			// Delete session
-			this.authSessionsRepository.delete(session.id);
+			if (!accessToken) throw new ApiError(meta.errors.pendingSession);
+			// Rotation or another collector may have consumed the original session.
+			const consumed = await this.authSessionsRepository.delete({ id: session.id, userId: session.userId });
+			if (!consumed.affected) throw new ApiError(meta.errors.noSuchSession);
 
 			return {
 				accessToken: accessToken.token,

@@ -10,7 +10,7 @@ export function decideCorsOptions(
 	configUrl: string,
 ): CorsDecision {
 	const requestPath = request.url.includes('?') ? request.url.substring(0, request.url.indexOf('?')) : request.url;
-	if (['/api/signup', '/api/signin-flow', '/api/signin-with-passkey', '/api/signup-pending'].includes(requestPath)) {
+	if (['/api/signup', '/api/signin-flow', '/api/signin-enroll-2fa', '/api/signin-with-passkey', '/api/signup-pending'].includes(requestPath)) {
 		return {
 			origin: configUrl,
 			credentials: true,

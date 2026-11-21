@@ -8,6 +8,7 @@ import type { Config } from '@/config.js';
 import { DI } from '@/di-symbols.js';
 import type Logger from '@/logger.js';
 import { bindThis } from '@/decorators.js';
+import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { MetaService } from '@/core/MetaService.js';
 
 @Injectable()
@@ -19,12 +20,21 @@ export class CommandService {
 		private config: Config,
 
 		private metaService: MetaService,
+		private enrollment: TwoFactorEnrollmentService,
 	) {
 	}
 
 	@bindThis
 	public async ping() {
 		console.log('pong');
+	}
+
+	@bindThis
+	public async resetRootMfa(userId?: string) {
+		if (!userId || userId !== (await this.metaService.fetch(true)).rootUserId) {
+			throw new Error('Supply the current root account ID to confirm the reset.');
+		}
+		await this.enrollment.reset(userId);
 	}
 
 	@bindThis

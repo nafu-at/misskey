@@ -31,6 +31,7 @@ export function generateClientTransactionId(initiator: string) {
 function handleResponse<_ResT>(
 	resolve: (value: (_ResT | PromiseLike<_ResT>)) => void,
 	reject: (reason?: any) => void,
+	credential?: string | null,
 ): ((value: Response<any, any>) => (void | PromiseLike<void>)) {
 	return async (res) => {
 		if (res.ok && res.status !== 204) {
@@ -43,6 +44,10 @@ function handleResponse<_ResT>(
 			const body = await res
 				.json()
 				.catch(() => ({ statusCode: res.status, message: res.statusText }));
+			if (res.status === 403 && credential && credential === $i?.token && body.error?.code === 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
+				const { requestTwoFactorSignin } = await import('@/accounts.js');
+				await requestTwoFactorSignin(credential);
+			}
 			reject(typeof body.error === 'object' ? body.error : body);
 		}
 	};
@@ -108,7 +113,7 @@ export function misskeyApi<
 				});
 			}
 			return res;
-		}).then(handleResponse(resolve, reject)).catch(reject);
+		}).then(handleResponse(resolve, reject, credential)).catch(reject);
 	});
 
 	promise.then(onFinally, onFinally);

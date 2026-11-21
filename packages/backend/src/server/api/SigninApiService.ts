@@ -27,6 +27,7 @@ import { LoggerService } from '@/core/LoggerService.js';
 import { CaptchaService } from '@/core/CaptchaService.js';
 import { FastifyReplyError } from '@/misc/fastify-reply-error.js';
 import { RateLimiterService } from './RateLimiterService.js';
+import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { SigninService } from './SigninService.js';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/server';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -55,6 +56,7 @@ export class SigninApiService {
 		private idService: IdService,
 		private rateLimiterService: RateLimiterService,
 		private signinService: SigninService,
+		private enrollment: TwoFactorEnrollmentService,
 		private userAuthService: UserAuthService,
 		private webAuthnService: WebAuthnService,
 		private captchaService: CaptchaService,
@@ -239,6 +241,11 @@ export class SigninApiService {
 			}
 
 			if (same) {
+				const enrollment = await this.enrollment.begin(user, profile.password);
+				if (enrollment) {
+					reply.header('Cache-Control', 'no-store');
+					return enrollment;
+				}
 				logger.info('Successfully signed in with password.');
 				return this.signinService.signin(request, reply, user);
 			} else {

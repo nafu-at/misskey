@@ -30,6 +30,7 @@ import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
 import { misskeyApi } from '@/utility/misskey-api.js';
 import { login } from '@/accounts.js';
+import { enrollTwoFactor } from '@/utility/two-factor-enrollment.js';
 
 const submitting = ref(false);
 
@@ -43,8 +44,10 @@ function submit() {
 
 	misskeyApi('signup-pending', {
 		code: props.code,
-	}).then(res => {
-		return login(res.i, '/');
+	}, null).then(async res => {
+		const result = 'ticket' in res ? await enrollTwoFactor(res) : res;
+		if (result) return login(result.i, '/');
+		window.location.replace('/?required2fa=1');
 	}).catch(() => {
 		submitting.value = false;
 

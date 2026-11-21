@@ -82,6 +82,7 @@ import XInput from '@/components/MkSignin.input.vue';
 import XTotp from '@/components/MkSignin.totp.vue';
 import XPasskey from '@/components/MkSignin.passkey.vue';
 import { login } from '@/accounts.js';
+import { enrollTwoFactor } from '@/utility/two-factor-enrollment.js';
 
 const emit = defineEmits<{
 	(ev: 'login', v: Misskey.entities.SigninFlowResponse & { finished: true }): void;
@@ -235,12 +236,23 @@ async function tryLogin(req: Partial<Misskey.entities.SigninFlowRequest>): Promi
 		throw new Error('Invalid request');
 	}
 
-	return await misskeyApi('signin-flow', _req).then(async (res) => {
+	return await misskeyApi('signin-flow', _req, null).then(async (res) => {
 		if (res.finished) {
 			emit('login', res);
 			await onLoginSucceeded(res);
 		} else {
 			switch (res.next) {
+				case 'enroll-2fa': {
+					password.value = '';
+					const result = await enrollTwoFactor(res);
+					if (result) {
+						emit('login', result);
+						await onLoginSucceeded(result);
+						return result;
+					}
+					page.value = 'input';
+					break;
+				}
 				case 'captcha': {
 					needCaptcha.value = true;
 					page.value = 'password';

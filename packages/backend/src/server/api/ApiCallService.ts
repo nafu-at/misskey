@@ -21,7 +21,7 @@ import { TelemetryService } from '@/core/telemetry/TelemetryService.js';
 import type { Config } from '@/config.js';
 import { MetaService } from '@/core/MetaService.js';
 import { IdentifiableError } from '@/misc/identifiable-error.js';
-import { ApiError } from './error.js';
+import { ApiError, enrollmentRequired } from './error.js';
 import { RateLimiterService } from './RateLimiterService.js';
 import { ApiLoggerService } from './ApiLoggerService.js';
 import { AuthenticateService, AuthenticationError } from './AuthenticateService.js';
@@ -362,6 +362,10 @@ export class ApiCallService implements OnApplicationShutdown {
 		request: FastifyRequest<{ Body: Record<string, unknown> | undefined, Querystring: Record<string, unknown> }>,
 	) {
 		const meta = await this.metaService.fetch();
+		const policies = await this.roleService.getUserPolicies(user?.id ?? null);
+		if (user && await this.roleService.requiresTwoFactorEnrollment(user.id, policies)) {
+			throw new ApiError(enrollmentRequired);
+		}
 		const isSecure = user != null && token == null;
 
 		if (ep.meta.secure && !isSecure) {
@@ -390,7 +394,7 @@ export class ApiCallService implements OnApplicationShutdown {
 			}
 
 			// TODO: 毎リクエスト計算するのもあれだしキャッシュしたい
-			const factor = user ? (await this.roleService.getUserPolicies(user.id)).rateLimitFactor : 1;
+			const factor = user ? policies.rateLimitFactor : 1;
 
 			if (limitActor != null && factor > 0) {
 				// Rate limit
@@ -458,7 +462,6 @@ export class ApiCallService implements OnApplicationShutdown {
 		const { requiredRolePolicy } = ep.meta;
 		if (requiredRolePolicy != null && (meta.rootUserId !== user!.id)) {
 			const myRoles = await this.roleService.getUserRoles(user!.id);
-			const policies = await this.roleService.getUserPolicies(user!.id);
 			const requiredPolicies = typeof requiredRolePolicy === 'string' ? [requiredRolePolicy] : requiredRolePolicy;
 			if (requiredPolicies.some(policy => !policies[policy]) && !myRoles.some(r => r.isAdministrator)) {
 				throw new ApiError({
@@ -503,7 +506,6 @@ export class ApiCallService implements OnApplicationShutdown {
 
 		let attachmentFile: AttachmentFile | null = null;
 		if (ep.meta.requireFile && preparedFile) {
-			const policies = await this.roleService.getUserPolicies(user!.id);
 			const userMaxFileSize = policies.maxFileSizeMb * 1024 * 1024;
 
 			if (preparedFile.size > userMaxFileSize) {
