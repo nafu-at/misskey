@@ -15,6 +15,7 @@ export const TIPS = [
 	'deck',
 	'tl.home',
 	'tl.local',
+	'tl.media',
 	'tl.social',
 	'tl.global',
 	'abuses',
