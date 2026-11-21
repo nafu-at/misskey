@@ -9,7 +9,7 @@ export const meta = {
 	tags: ['account'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:account',
 

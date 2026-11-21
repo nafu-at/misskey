@@ -11,7 +11,7 @@ import { AccountMoveService } from '@/core/AccountMoveService.js';
 import type { DriveFilesRepository } from '@/models/_.js';
 import { DI } from '@/di-symbols.js';
 import { ApiError } from '../../error.js';
-//TODO:  requireRolePolicy: 'canImportMuting',
+//TODO:  requiredRolePolicy: 'canImportMuting',
 
 export const meta = {
 	secure: true,

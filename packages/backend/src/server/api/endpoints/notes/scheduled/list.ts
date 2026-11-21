@@ -9,7 +9,7 @@ export const meta = {
 	tags: ['notes'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canScheduleNote',
+	requiredRolePolicy: 'canScheduleNote',
 
 	kind: 'write:notes',
 

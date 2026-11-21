@@ -22,7 +22,7 @@ export const meta = {
 	},
 
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	kind: 'write:blocks',
 

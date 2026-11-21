@@ -17,7 +17,7 @@ import { UserListService } from '@/core/UserListService.js';
 
 export const meta = {
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	prohibitMoved: true,
 	kind: 'write:account',

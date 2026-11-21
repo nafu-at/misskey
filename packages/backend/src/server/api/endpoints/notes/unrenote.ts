@@ -16,7 +16,7 @@ export const meta = {
 	tags: ['notes'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:notes',
 

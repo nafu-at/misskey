@@ -15,7 +15,7 @@ export const meta = {
 	tags: ['gallery'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:gallery',
 

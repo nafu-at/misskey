@@ -39,7 +39,8 @@ interface IEndpointMetaBase {
 	 */
 	readonly requireAdmin?: boolean;
 
-	readonly requiredRolePolicy?: KeyOf<'RolePolicies'>;
+	/** 複数指定した場合はすべてのポリシーを必要とする。 */
+	readonly requiredRolePolicy?: KeyOf<'RolePolicies'> | ReadonlyArray<KeyOf<'RolePolicies'>>;
 
 	/**
 	 * 引っ越し済みのユーザーによるリクエストを禁止するか

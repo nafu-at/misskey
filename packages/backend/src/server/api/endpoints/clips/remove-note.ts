@@ -12,7 +12,7 @@ export const meta = {
 	tags: ['account', 'notes', 'clips'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	prohibitMoved: true,
 

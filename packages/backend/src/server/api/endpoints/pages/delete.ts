@@ -17,7 +17,7 @@ export const meta = {
 	tags: ['pages'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:pages',
 

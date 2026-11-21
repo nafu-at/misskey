@@ -24,7 +24,7 @@ export const meta = {
 	tags: ['notes'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	prohibitMoved: true,
 

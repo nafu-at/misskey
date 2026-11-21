@@ -20,7 +20,7 @@ export const meta = {
 	tags: ['drive'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	prohibitMoved: true,
 

@@ -17,13 +17,12 @@ export const meta = {
 	tags: ['channels'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
 
 	prohibitMoved: true,
 
 	kind: 'write:channels',
 
-	requiredRolePolicy: 'canCreateChannel',
+	requiredRolePolicy: ['canCreateContent', 'canCreateChannel'],
 
 	limit: {
 		duration: ms('1hour'),

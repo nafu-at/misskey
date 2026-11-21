@@ -14,7 +14,7 @@ export const meta = {
 	tags: ['reactions', 'notes'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	kind: 'write:reactions',
 

@@ -12,7 +12,7 @@ export const meta = {
 	tags: ['clips'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:account',
 

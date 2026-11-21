@@ -16,7 +16,7 @@ export const meta = {
 	tags: ['gallery'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	prohibitMoved: true,
 

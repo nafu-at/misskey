@@ -27,7 +27,7 @@ export const meta = {
 
 	secure: true,
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	prohibitMoved: true,
 

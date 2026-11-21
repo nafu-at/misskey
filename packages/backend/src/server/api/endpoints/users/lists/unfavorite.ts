@@ -11,7 +11,7 @@ import { DI } from '@/di-symbols.js';
 
 export const meta = {
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 	kind: 'write:account',
 	errors: {
 		noSuchList: {

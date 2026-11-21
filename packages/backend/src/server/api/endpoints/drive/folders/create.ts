@@ -17,7 +17,7 @@ export const meta = {
 	tags: ['drive'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	kind: 'write:drive',
 

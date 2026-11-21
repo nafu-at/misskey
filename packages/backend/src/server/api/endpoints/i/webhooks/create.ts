@@ -18,7 +18,7 @@ export const meta = {
 	tags: ['webhooks'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canCreateContent',
+	requiredRolePolicy: 'canCreateContent',
 
 	kind: 'write:account',
 

@@ -15,7 +15,7 @@ export const meta = {
 	tags: ['channels'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	kind: 'write:channels',
 

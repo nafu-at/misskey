@@ -15,7 +15,7 @@ export const meta = {
 	requireCredential: true,
 
 	prohibitMoved: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	kind: 'write:account',
 

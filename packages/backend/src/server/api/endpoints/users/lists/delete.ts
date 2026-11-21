@@ -13,7 +13,7 @@ export const meta = {
 	tags: ['lists'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canDeleteContent',
+	requiredRolePolicy: 'canDeleteContent',
 
 	kind: 'write:account',
 

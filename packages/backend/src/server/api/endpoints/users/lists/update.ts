@@ -15,7 +15,7 @@ export const meta = {
 	tags: ['lists'],
 
 	requireCredential: true,
-	requireRolePolicy: 'canUpdateContent',
+	requiredRolePolicy: 'canUpdateContent',
 
 	kind: 'write:account',
 
