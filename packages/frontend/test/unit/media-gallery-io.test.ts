@@ -10,8 +10,9 @@ import type { entities } from 'misskey-js';
 import type { Content } from '@/components/MkLightbox.item.vue';
 import MkMediaList from '@/components/MkMediaList.vue';
 import MkLightboxItem from '@/components/MkLightbox.item.vue';
-import MkVideoControl from '@/components/MkVideoControl.vue';
+import MediaControls from '@/components/MkLightbox.item.controls.vue';
 import { DI } from '@/di.js';
+import { i18n } from '@/i18n.js';
 import { sensitiveContentConsent, requestSensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
 import hasAudio from '@/utility/media-has-audio.js';
 import * as os from '@/os.js';
@@ -76,10 +77,10 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-function renderMediaList() {
+function renderMediaList(mediaList = [file]) {
 	const list = ref<InstanceType<typeof MkMediaList>>();
 	const result = render(defineComponent({
-		setup: () => () => h(MkMediaList, { ref: list, mediaList: [file] }),
+		setup: () => () => h(MkMediaList, { ref: list, mediaList }),
 	}), { global });
 	return { ...result, list };
 }
@@ -115,7 +116,7 @@ test('承認済みのサムネイルから開くときは確認を繰り返さ�
 	expect(os.popupAsyncWithDialog).toHaveBeenCalledOnce();
 	const props = vi.mocked(os.popupAsyncWithDialog).mock.calls[0][1] as { contents: Content[] };
 	expect(props.contents[0].initiallyRevealed).toBe(true);
-	const gallery = render(MkLightboxItem, { props: { content: props.contents[0], activated: true }, global });
+	const gallery = render(MkLightboxItem, { props: { content: props.contents[0], activated: true, pixelatedZoom: false }, global });
 	expect(gallery.container.querySelector(`img[src="${file.url}"]`)).not.toBeNull();
 	expect(os.confirm).toHaveBeenCalledOnce();
 });
@@ -123,7 +124,7 @@ test('承認済みのサムネイルから開くときは確認を繰り返さ�
 test.each([false, true])('直接のプレビューも個別確認の結果を守る（キャンセル: %s）', async (canceled) => {
 	sensitiveContentConsent.value = true;
 	vi.mocked(os.confirm).mockResolvedValue({ canceled });
-	const result = render(MkLightboxItem, { props: { content, activated: true }, global });
+	const result = render(MkLightboxItem, { props: { content, activated: true, pixelatedZoom: false }, global });
 	expect(result.container.querySelector('img[src]')).toBeNull();
 	await fireEvent.click(result.getByText('Click to show'));
 	await waitFor(() => expect(os.confirm).toHaveBeenCalledOnce());
@@ -132,8 +133,26 @@ test.each([false, true])('直接のプレビューも個別確認の結果を守
 
 test.each([null, false])('承認済みの印があっても現在の同意状態 %s を優先する', (consent) => {
 	sensitiveContentConsent.value = consent;
-	const result = render(MkLightboxItem, { props: { content: { ...content, initiallyRevealed: true }, activated: true }, global });
+	const result = render(MkLightboxItem, { props: { content: { ...content, initiallyRevealed: true }, activated: true, pixelatedZoom: false }, global });
 	expect(result.container.querySelector('img[src]')).toBeNull();
+});
+
+test.each(['button', 'keyboard'])('音声をインラインで再生でき、%s で開くと再生を停止して同じ添付を表示する', async (route) => {
+	const audio = { ...file, id: 'audio', type: 'audio/mpeg', name: 'audio.mp3', url: 'https://example.com/audio.mp3', isSensitive: false };
+	const result = renderMediaList([file, audio]);
+	const element = result.container.querySelector('audio')!;
+	expect(element.querySelector('source')?.src).toBe(audio.url);
+	const pause = vi.spyOn(element, 'pause').mockImplementation(() => {});
+	Object.defineProperty(element, 'paused', { configurable: true, get: () => false });
+
+	if (route === 'button') await fireEvent.click(result.getByRole('button', { name: i18n.ts.openInWindow }));
+	else await result.list.value?.openGallery(audio.id);
+	await waitFor(() => expect(os.popupAsyncWithDialog).toHaveBeenCalledOnce());
+	expect(pause).toHaveBeenCalledOnce();
+	expect(vi.mocked(os.popupAsyncWithDialog).mock.calls[0][1]).toMatchObject({
+		defaultIndex: 1,
+		contents: [{ id: file.id, initiallyRevealed: false }, { id: audio.id, type: 'audio', initiallyRevealed: true }],
+	});
 });
 
 test.each(['削除', '差し替え', '維持'])('音声判定後は対象動画が%sされた状態を反映する', async (operation) => {
@@ -145,7 +164,7 @@ test.each(['削除', '差し替え', '維持'])('音声判定後は対象動画�
 	const replacement = document.createElement('video');
 	replacement.play = vi.fn().mockResolvedValue(undefined);
 	const video = shallowRef<HTMLVideoElement | null>(original);
-	render(MkVideoControl, { global: { ...global, provide: { [DI.mkLightboxItemVideoEl as symbol]: video } } });
+	render(MediaControls, { props: { volume: 0.25 }, global: { ...global, provide: { [DI.mkLightboxItemMediaEl as symbol]: video } } });
 	if (operation === '削除') video.value = null;
 	if (operation === '差し替え') video.value = replacement;
 	await nextTick();

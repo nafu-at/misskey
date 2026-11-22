@@ -1110,6 +1110,7 @@ caption: "キャプション"
 loggedInAsBot: "Botアカウントでログイン中"
 tools: "ツール"
 cannotLoad: "読み込めません"
+cannotPreview: "プレビューできません"
 numberOfProfileView: "プロフィール表示回数"
 like: "いいね！"
 unlike: "いいねを解除"
@@ -1560,6 +1561,7 @@ append: "末尾に追加"
 prepend: "先頭に追加"
 urlPreviewSensitiveList: "サムネイルの表示を制限するURL"
 urlPreviewSensitiveListDescription: "スペースで区切るとAND指定になり、改行で区切るとOR指定になります。スラッシュで囲むと正規表現になります。一致した場合、サムネイルが表示されなくなります。"
+pixelatedZoom: "ピクセルアート拡大モード"
 
 _imageEditing:
   _vars:
@@ -3494,6 +3496,8 @@ _urlPreviewSetting:
   summaryProxyDescription2: "プロキシには下記パラメータがクエリ文字列として連携されます。プロキシ側がこれらをサポートしない場合、設定値は無視されます。"
 
 _mediaControls:
+  play: "再生"
+  pause: "一時停止"
   pip: "ピクチャインピクチャ"
   playbackRate: "再生速度"
   loop: "ループ再生"

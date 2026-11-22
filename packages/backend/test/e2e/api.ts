@@ -107,6 +107,15 @@ describe('API', () => {
 		assert.strictEqual((await issue()).status, 200);
 	});
 
+	test('アプリのアクセストークンは自身だけを失効できる', async () => {
+		const first = await createAppToken(bob, []);
+		const second = await createAppToken(bob, []);
+		assert.strictEqual((await api('i/revoke-token', { token: first })).status, 401);
+		assert.strictEqual((await api('i/revoke-token', { token: second }, { token: first })).status, 403);
+		assert.strictEqual((await api('i/revoke-token', { token: first }, { token: first })).status, 204);
+		assert.strictEqual((await api('i/revoke-token', { token: second }, { token: second })).status, 204);
+	});
+
 	test('管理者専用のAPIのアクセス制限', async () => {
 		const application = await createAppToken(alice, ['read:account']);
 		const application2 = await createAppToken(alice, ['read:admin:index-stats']);

@@ -5,7 +5,16 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 <template>
 <div :class="$style.root">
-	<XBanner v-for="media in bannerMediaList" :key="media.id" :media="media" :user="user"/>
+	<XBanner v-for="media in medias.nonPreviewable" :key="media.id" :media="media" :user="user ?? undefined"/>
+	<XAudio
+		v-for="media in audioFiles"
+		:key="`audio:${media.id}`"
+		:ref="(comp) => { mediaComponents.set(media.id, comp as InstanceType<typeof XAudio> | null); }"
+		:audio="media"
+		:user="user ?? undefined"
+		canOpenGallery
+		@mediaClick="onMediaClick(media)"
+	/>
 	<div v-if="count > 0" :class="$style.container">
 		<div
 			ref="gallery"
@@ -19,10 +28,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 				}] : count === 2 ? $style.n2 : count === 3 ? $style.n3 : count === 4 ? $style.n4 : $style.nMany,
 			]"
 		>
-			<template v-for="media in previewableMediaList">
+			<template v-for="media in visuals">
 				<XVideo
 					v-if="media.type.startsWith('video')"
 					:key="`video:${media.id}`"
+					:ref="(comp) => { mediaComponents.set(media.id, comp as InstanceType<typeof XVideo> | null); }"
 					:class="$style.media"
 					:video="media"
 					@mediaClick="onMediaClick(media)"
@@ -30,6 +40,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 				<XImage
 					v-else-if="media.type.startsWith('image')"
 					:key="`image:${media.id}`"
+					:ref="(comp) => { mediaComponents.set(media.id, comp as InstanceType<typeof XImage> | null); }"
 					:marker="`${markerId}:${media.id}`"
 					:disableImageLink="true"
 					:cover="cropImages"
@@ -47,34 +58,54 @@ SPDX-License-Identifier: AGPL-3.0-only
 <script lang="ts" setup>
 import { computed, markRaw, onMounted, watch, useTemplateRef } from 'vue';
 import * as Misskey from 'misskey-js';
-import { FILE_TYPE_BROWSERSAFE } from '@@/js/const.js';
 import type { Content } from '@/components/MkLightbox.item.vue';
+import type { MediaComponentExposes } from '@/types/media-component.js';
 import XBanner from '@/components/MkMediaBanner.vue';
+import XAudio from '@/components/MkMediaAudio.vue';
 import XImage from '@/components/MkMediaImage.vue';
 import XVideo from '@/components/MkMediaVideo.vue';
 import * as os from '@/os.js';
 import { prefer } from '@/preferences.js';
+import { isPreviewable, getType } from '@/utility/lightbox.js';
 import { genId } from '@/utility/id.js';
 import { isFileBlocked, canRevealFile } from '@/utility/sensitive-file.js';
 import { sensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
 
 const props = defineProps<{
 	mediaList: Misskey.entities.DriveFile[];
+	user?: Misskey.entities.User | null; // DriveFileのuserはnullになることがある。その場合に使用する所有者情報
 	raw?: boolean;
 	cropImages?: boolean;
-	user?: Misskey.entities.UserLite;
 }>();
 
 const gallery = useTemplateRef('gallery');
-const bannerMediaList = computed(() => props.mediaList.filter(media => !isFileBlocked(media) && !previewable(media)));
-const previewableMediaList = computed(() => props.mediaList.filter(media => !isFileBlocked(media) && previewable(media)));
-const count = computed(() => previewableMediaList.value.length);
+const medias = computed(() => {
+	const previewable: Misskey.entities.DriveFile[] = [];
+	const nonPreviewable: Misskey.entities.DriveFile[] = [];
+	for (const file of props.mediaList) {
+		if (isFileBlocked(file)) continue;
+		if (isPreviewable(file.type)) {
+			previewable.push(file);
+		} else {
+			nonPreviewable.push(file);
+		}
+	}
+
+	return {
+		previewable,
+		nonPreviewable,
+	};
+});
+const mediaComponents = new Map<string, MediaComponentExposes | null>();
+const audioFiles = computed(() => medias.value.previewable.filter(file => file.type.startsWith('audio')));
+const visuals = computed(() => medias.value.previewable.filter(file => !file.type.startsWith('audio')));
+const count = computed(() => visuals.value.length);
 const markerId = genId();
 
 async function calcAspectRatio() {
 	if (!gallery.value) return;
 
-	const img = previewableMediaList.value[0];
+	const img = visuals.value[0];
 
 	if (count.value !== 1 || !img || !(img.properties.width && img.properties.height)) {
 		gallery.value.style.aspectRatio = '';
@@ -102,23 +133,20 @@ async function calcAspectRatio() {
 	}
 }
 
-onMounted(() => {
-	calcAspectRatio();
-});
-
-const previewable = (file: Misskey.entities.DriveFile): boolean => {
-	if (file.type === 'image/svg+xml') return true; // svgのwebpublic/thumbnailはpngなのでtrue
-	// FILE_TYPE_BROWSERSAFEに適合しないものはブラウザで表示するのに不適切
-	return (file.type.startsWith('video') || file.type.startsWith('image')) && FILE_TYPE_BROWSERSAFE.includes(file.type);
-};
+onMounted(calcAspectRatio);
 
 watch(count, calcAspectRatio, { flush: 'post' });
+
+function pauseInlinePlayback() {
+	for (const component of mediaComponents.values()) component?.pausePlayback?.();
+}
 
 async function onMediaClick(file: Misskey.entities.DriveFile) {
 	if (isFileBlocked(file)) return;
 	if (file.isSensitive && sensitiveContentConsent.value !== true && !(await canRevealFile(file))) return;
 
 	if (prefer.s.imageNewTab) {
+		pauseInlinePlayback();
 		window.open(file.url, '_blank');
 		return;
 	}
@@ -127,14 +155,16 @@ async function onMediaClick(file: Misskey.entities.DriveFile) {
 
 async function openGallery(id?: string, alreadyRevealed = false) {
 	if (id == null) {
-		const firstImage = previewableMediaList.value[0];
+		const firstImage = medias.value.previewable[0];
 		if (firstImage == null) return;
 		id = firstImage.id;
 	}
-	const selected = previewableMediaList.value.find(media => media.id === id);
+	const selected = medias.value.previewable.find(media => media.id === id);
 	if (selected == null) return;
 	// キーボードから開く場合も、個別の表示確認を省略しない。
 	if (!alreadyRevealed && !(await canRevealFile(selected))) return;
+
+	pauseInlinePlayback();
 
 	const getElementByMarker = (marker: string) => {
 		if (gallery.value == null) return null;
@@ -143,9 +173,9 @@ async function openGallery(id?: string, alreadyRevealed = false) {
 		return markRaw(found);
 	};
 
-	const contents = previewableMediaList.value.map<Content>(media => ({
+	const contents = medias.value.previewable.map<Content>(media => ({
 		id: media.id,
-		type: media.type.startsWith('video') ? 'video' : 'image',
+		type: getType(media.type),
 		url: media.url,
 		thumbnailUrl: media.thumbnailUrl,
 		width: media.properties.width,
@@ -156,9 +186,15 @@ async function openGallery(id?: string, alreadyRevealed = false) {
 		sourceElement: getElementByMarker(`${markerId}:${media.id}`),
 	}));
 
+	const initiallyRevealedContentIds = contents
+		.filter(content => mediaComponents.get(content.id)?.isRevealed() === true)
+		.map(content => content.id);
+
 	const { dispose } = await os.popupAsyncWithDialog(import('@/components/MkLightbox.vue').then(x => x.default), {
 		defaultIndex: contents.findIndex(conten => conten.id === id),
 		contents: contents,
+		initiallyRevealedContentIds,
+		user: props.user,
 	}, {
 		closed: () => dispose(),
 	});

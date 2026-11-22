@@ -6,9 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
-import { IsNull } from 'typeorm';
+import { IsNull, LessThanOrEqual } from 'typeorm';
 import { DI } from '@/di-symbols.js';
-import type { RegistrationTicketsRepository, UsedUsernamesRepository, UserPendingsRepository, UserProfilesRepository, UsersRepository, MiRegistrationTicket, MiMeta } from '@/models/_.js';
+import type { RegistrationTicketsRepository, UsedUsernamesRepository, UserPendingsRepository, UserProfilesRepository, UsersRepository, MiMeta } from '@/models/_.js';
 import type { Config } from '@/config.js';
 import { CaptchaService } from '@/core/CaptchaService.js';
 import { IdService } from '@/core/IdService.js';
@@ -16,6 +16,8 @@ import { SignupService } from '@/core/SignupService.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import { EmailService } from '@/core/EmailService.js';
 import { QueueService } from '@/core/QueueService.js';
+import { MiRegistrationTicket } from '@/models/RegistrationTicket.js';
+import { MiUserPending } from '@/models/UserPending.js';
 import { MiLocalUser } from '@/models/User.js';
 import { FastifyReplyError } from '@/misc/fastify-reply-error.js';
 import { bindThis } from '@/decorators.js';
@@ -24,6 +26,7 @@ import { LoggerService } from '@/core/LoggerService.js';
 import { envOption } from '@/env.js';
 import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { SigninService } from './SigninService.js';
+import type { FindOptionsWhere } from 'typeorm';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 @Injectable()
@@ -156,6 +159,8 @@ export class SignupApiService {
 				return;
 			}
 
+			// ここでの検証はあくまで早期リジェクトのための事前チェックで、
+			// 実際の使用可否は消費直前の claimRegistrationTicket() が担保する
 			ticket = await this.registrationTicketsRepository.findOneBy({
 				code: invitationCode,
 			});
@@ -218,50 +223,67 @@ export class SignupApiService {
 			const salt = await bcrypt.genSalt(8);
 			const hash = await bcrypt.hash(password, salt);
 
-			const pendingUser = await this.userPendingsRepository.insertOne({
-				id: this.idService.gen(),
-				code,
-				email: emailAddress!,
-				username: username,
-				password: hash,
+			const pendingUserId = this.idService.gen();
+			const created = await this.userPendingsRepository.manager.transaction(async manager => {
+				if (ticket && !await this.claimRegistrationTicket(ticket, pendingUserId, manager)) return false;
+				await manager.insert(MiUserPending, {
+					id: pendingUserId,
+					code,
+					email: emailAddress!,
+					username,
+					password: hash,
+				});
+				return true;
 			});
 
-			const link = `${this.config.url}/signup-complete/${code}`;
-
-			this.queueService.createSendEmailJob(emailAddress!, 'Signup',
-				`To complete signup, please click this link:<br><a href="${link}">${link}</a>`,
-				`To complete signup, please click this link: ${link}`);
-
-			if (ticket) {
-				logger.info('Update invitation code as used by pending user.', { ticketId: ticket.id, pendingUserId: pendingUser.id, pendingUsername: pendingUser.username });
-				await this.registrationTicketsRepository.update(ticket.id, {
-					usedAt: new Date(),
-					pendingUserId: pendingUser.id,
-				});
+			if (!created) {
+				reply.code(400);
+				return;
 			}
 
-			logger.info('Successfully created pending user.', { pendingUserId: pendingUser.id });
+			const link = `${this.config.url}/signup-complete/${code}`;
+			try {
+				await this.queueService.createSendEmailJob(emailAddress!, 'Signup',
+					`To complete signup, please click this link:<br><a href="${link}">${link}</a>`,
+					`To complete signup, please click this link: ${link}`);
+			} catch (err) {
+				await this.userPendingsRepository.manager.transaction(async manager => {
+					await manager.delete(MiUserPending, { id: pendingUserId });
+					if (ticket) {
+						await manager.update(MiRegistrationTicket, {
+							id: ticket.id, pendingUserId, usedById: IsNull(),
+						}, { usedAt: null, pendingUserId: null });
+					}
+				});
+				throw err;
+			}
+
+			logger.info('Successfully created pending user.', { pendingUserId, ticketId: ticket?.id });
 			reply.code(204);
 			return;
 		} else {
+			if (ticket && !await this.claimRegistrationTicket(ticket)) {
+				reply.code(400);
+				return;
+			}
+
 			try {
 				const { account, secret, passwordHash } = await this.signupService.signup({
 					username, password, host,
 				});
 
-				const res = await this.userEntityService.pack(account, account, {
-					schema: 'MeDetailed',
-					includeSecrets: true,
-				});
-
 				if (ticket) {
 					logger.info('Update invitation code as used by user.', { ticketId: ticket.id, userId: account.id, username });
 					await this.registrationTicketsRepository.update(ticket.id, {
-						usedAt: new Date(),
 						usedBy: account,
 						usedById: account.id,
 					});
 				}
+
+				const res = await this.userEntityService.pack(account, account, {
+					schema: 'MeDetailed',
+					includeSecrets: true,
+				});
 
 				logger.info('Successfully created user.', { userId: account.id });
 				const enrollment = await this.enrollment.begin(account, passwordHash);
@@ -275,9 +297,56 @@ export class SignupApiService {
 				};
 			} catch (err) {
 				logger.error('Failed to create user.', { error: err });
+				// 確保したコードが無駄に消費されたままになるのを防ぐ
+				// (アカウントと紐付け済みの場合は release 側の条件により戻らない)
+				if (ticket) await this.releaseRegistrationTicket(ticket);
 				throw new FastifyReplyError(400, typeof err === 'string' ? err : (err as Error).toString());
 			}
 		}
+	}
+
+	/**
+	 * 招待コードを使用中として確保する
+	 *
+	 * @returns 確保できた場合は true、既に他のリクエストが消費していた場合は false
+	 */
+	@bindThis
+	private async claimRegistrationTicket(ticket: MiRegistrationTicket, pendingUserId: string | null = null, manager = this.registrationTicketsRepository.manager): Promise<boolean> {
+		const where: FindOptionsWhere<MiRegistrationTicket>[] = [
+			{ id: ticket.id, usedById: IsNull(), usedAt: IsNull() },
+		];
+
+		// メアド認証が有効の場合、認証されないままメール送信から30分経過したコードは再び使用できる
+		if (pendingUserId != null) {
+			where.push({
+				id: ticket.id,
+				usedById: IsNull(),
+				usedAt: LessThanOrEqual(new Date(Date.now() - (1000 * 60 * 30))),
+			});
+		}
+
+		const result = await manager.update(MiRegistrationTicket, where, {
+			usedAt: new Date(),
+			pendingUserId,
+		});
+
+		return (result.affected ?? 0) > 0;
+	}
+
+	/**
+	 * {@link claimRegistrationTicket} で確保した招待コードを未使用に戻す
+	 *
+	 * 既にアカウントと紐付いた (= 消費が確定した) コードは戻さない
+	 */
+	@bindThis
+	private async releaseRegistrationTicket(ticket: MiRegistrationTicket): Promise<void> {
+		await this.registrationTicketsRepository.update({
+			id: ticket.id,
+			usedById: IsNull(),
+		}, {
+			usedAt: null,
+			pendingUserId: null,
+		});
 	}
 
 	@bindThis

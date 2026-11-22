@@ -38,7 +38,7 @@ function createService() {
 		{ fetch: vi.fn().mockResolvedValue({}) } as never,
 		authenticateService as never,
 		{} as never,
-		{} as never,
+		{ getUserPolicies: vi.fn().mockResolvedValue({}) } as never,
 		apiLoggerService as never,
 		telemetryService as never,
 	);

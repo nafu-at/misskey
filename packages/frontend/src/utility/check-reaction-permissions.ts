@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import * as Misskey from 'misskey-js';
+import type * as Misskey from 'misskey-js';
+import { getEmojiNameFromReaction, isLocalCustomEmojiName } from '@@/js/emoji-name.js';
+import { customEmojisMap } from '@/custom-emojis.js';
 import type { UnicodeEmojiDef } from '@@/js/emojilist.js';
+import { getUnicodeEmojiOrNull } from '@@/js/emojilist.js';
 
 export function checkReactionPermissions(me: Misskey.entities.MeDetailed, note: Misskey.entities.Note, emoji: Misskey.entities.EmojiSimple | UnicodeEmojiDef | string): boolean {
 	if (typeof emoji === 'string') return true; // UnicodeEmojiDefにも無い絵文字であれば文字列で来る。Unicode絵文字であることには変わりないので常にリアクション可能とする;
@@ -17,4 +20,13 @@ export function checkReactionPermissions(me: Misskey.entities.MeDetailed, note: 
 		&& !(emoji.isSensitive && (note.reactionAcceptance === 'nonSensitiveOnly' || note.reactionAcceptance === 'nonSensitiveOnlyForLocalLikeOnlyForRemote'))
 		&& (roleIdsThatCanBeUsedThisEmojiAsReaction.length === 0 || me.roles.some(role => roleIdsThatCanBeUsedThisEmojiAsReaction.includes(role.id)))
 		&& (roleIdsThatCanNotBeUsedThisEmojiAsReaction.length === 0 || !me.roles.some(role => roleIdsThatCanNotBeUsedThisEmojiAsReaction.includes(role.id)));
+}
+
+export function canUseReaction(me: Misskey.entities.MeDetailed | null, note: Misskey.entities.Note, reaction: string): boolean {
+	if (me == null) return false;
+	const name = getEmojiNameFromReaction(reaction);
+	const emoji = reaction.startsWith(':') && isLocalCustomEmojiName(name, null)
+		? customEmojisMap.get(name)
+		: getUnicodeEmojiOrNull(reaction);
+	return emoji != null && checkReactionPermissions(me, note, emoji);
 }

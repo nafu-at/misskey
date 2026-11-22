@@ -77,6 +77,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 			/>
 		</div>
 	</div>
+	<button v-if="canOpenGallery && !hide" class="_button" :class="$style.openGallery" :title="i18n.ts.openInWindow" :aria-label="i18n.ts.openInWindow" @click.stop="emit('mediaClick')">
+		<i class="ti ti-arrows-maximize"></i>
+	</button>
 </div>
 </template>
 
@@ -99,7 +102,20 @@ const MkAudioVisualizer = defineAsyncComponent(() => import('@/components/MkAudi
 const props = defineProps<{
 	audio: Misskey.entities.DriveFile;
 	user?: Misskey.entities.UserLite;
+	canOpenGallery?: boolean;
 }>();
+
+const emit = defineEmits<{
+	(ev: 'mediaClick'): void;
+}>();
+
+defineExpose({
+	isRevealed: () => !hide.value,
+	pausePlayback: () => {
+		if (audioEl.value && !audioEl.value.paused) audioEl.value.pause();
+		audioVisualizer.value?.pauseAnimation();
+	},
+});
 
 const blocked = computed(() => isFileBlocked(props.audio));
 
@@ -413,6 +429,15 @@ onDeactivated(() => {
 	&:focus-visible {
 		outline: none;
 	}
+}
+
+.openGallery {
+	position: absolute;
+	inset-block-start: 4px;
+	inset-inline-end: 4px;
+	padding: 6px;
+	background: var(--MI_THEME-panel);
+	border-radius: var(--MI-radius);
 }
 
 .sensitive {

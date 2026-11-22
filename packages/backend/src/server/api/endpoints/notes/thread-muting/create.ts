@@ -31,6 +31,12 @@ export const meta = {
 			code: 'NO_SUCH_NOTE',
 			id: '5ff67ada-ed3b-2e71-8e87-a1a421e177d2',
 		},
+
+		alreadyMuting: {
+			message: 'You are already muting that thread.',
+			code: 'ALREADY_MUTING',
+			id: 'c146e22d-1141-4b31-b28d-176371014d18',
+		},
 	},
 } as const;
 
@@ -60,19 +66,18 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 				throw err;
 			});
 
-			const _mutedNotes = await this.notesRepository.find({
-				where: [{
-					id: note.threadId ?? note.id,
-				}, {
+			const result = await this.noteThreadMutingsRepository.createQueryBuilder()
+				.insert()
+				.values({
+					id: this.idService.gen(),
 					threadId: note.threadId ?? note.id,
-				}],
-			});
+					userId: me.id,
+				})
+				.orIgnore()
+				.returning('id')
+				.execute();
 
-			await this.noteThreadMutingsRepository.insert({
-				id: this.idService.gen(),
-				threadId: note.threadId ?? note.id,
-				userId: me.id,
-			});
+			if (result.raw.length === 0) throw new ApiError(meta.errors.alreadyMuting);
 		});
 	}
 }

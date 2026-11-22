@@ -30,7 +30,7 @@ docker-compose.yml
 !/.devcontainer/docker-compose.yml
 !/packages/backend/test/compose.yml
 !/packages/backend/test/docker-compose.yml
-./compose.yml
+/compose.yml
 .devcontainer/compose.yml
 
 # misskey

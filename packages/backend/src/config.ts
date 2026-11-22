@@ -10,10 +10,11 @@ import { type FastifyServerOptions } from 'fastify';
 import type * as Sentry from '@sentry/node';
 import type * as SentryVue from '@sentry/vue';
 import type * as Bull from 'bullmq';
-import type { RedisOptions } from 'ioredis';
+import type { RedisOptions as IoRedisRedisOptions } from 'ioredis';
+import type { RedisOptions as BullMqRedisOptions } from 'bullmq';
 import type { AccessLogConfiguration, LogFormat, LogLevelSetting } from './logging/types.js';
 
-export type RedisOptionsSource = Partial<RedisOptions> & {
+type RedisOptionsRequiredFields = {
 	host: string;
 	port: number;
 	family?: number;
@@ -22,6 +23,8 @@ export type RedisOptionsSource = Partial<RedisOptions> & {
 	prefix?: string;
 	queueNameSuffix?: string;
 };
+export type RedisOptionsSource = Partial<IoRedisRedisOptions & BullMqRedisOptions> & RedisOptionsRequiredFields;
+type RedisOptionsResolved = IoRedisRedisOptions & BullMqRedisOptions & RedisOptionsRequiredFields;
 
 type SentryBackendConfig = {
 	options: Partial<Sentry.NodeOptions>;
@@ -301,18 +304,18 @@ export type Config = {
 	externalMediaProxyEnabled: boolean;
 	videoThumbnailGenerator: string | null;
 	bypassRateLimit: { header: string; value: string }[] | undefined;
-	redis: RedisOptions & RedisOptionsSource;
-	redisForPubsub: RedisOptions & RedisOptionsSource;
-	redisForSystemQueue: RedisOptions & RedisOptionsSource;
-	redisForEndedPollNotificationQueue: RedisOptions & RedisOptionsSource;
-	redisForDeliverQueues: Array<RedisOptions & RedisOptionsSource>;
-	redisForInboxQueues: Array<RedisOptions & RedisOptionsSource>;
-	redisForDbQueue: RedisOptions & RedisOptionsSource;
-	redisForRelationshipQueues: Array<RedisOptions & RedisOptionsSource>;
-	redisForObjectStorageQueue: RedisOptions & RedisOptionsSource;
-	redisForWebhookDeliverQueue: RedisOptions & RedisOptionsSource;
-	redisForTimelines: RedisOptions & RedisOptionsSource;
-	redisForReactions: RedisOptions & RedisOptionsSource;
+	redis: RedisOptionsResolved;
+	redisForPubsub: RedisOptionsResolved;
+	redisForSystemQueue: RedisOptionsResolved;
+	redisForEndedPollNotificationQueue: RedisOptionsResolved;
+	redisForDeliverQueues: Array<RedisOptionsResolved>;
+	redisForInboxQueues: Array<RedisOptionsResolved>;
+	redisForDbQueue: RedisOptionsResolved;
+	redisForRelationshipQueues: Array<RedisOptionsResolved>;
+	redisForObjectStorageQueue: RedisOptionsResolved;
+	redisForWebhookDeliverQueue: RedisOptionsResolved;
+	redisForTimelines: RedisOptionsResolved;
+	redisForReactions: RedisOptionsResolved;
 	sentryForBackend: SentryBackendConfig | undefined;
 	sentryForFrontend: {
 		options: Partial<SentryVue.BrowserOptions> & { dsn: string };
@@ -480,7 +483,7 @@ function tryCreateUrl(url: string) {
 	}
 }
 
-function convertRedisOptions(options: RedisOptionsSource, host: string): RedisOptions & RedisOptionsSource {
+function convertRedisOptions(options: RedisOptionsSource, host: string): RedisOptionsResolved {
 	return {
 		...options,
 		password: options.pass,

@@ -93,7 +93,7 @@ interface IEndpointMetaBase {
 	 * エンドポイントの種類
 	 * パーミッションの実現に利用されます。
 	 */
-	readonly kind?: string;
+	readonly kind?: string | null;
 
 	readonly description?: string;
 
@@ -116,7 +116,7 @@ export type IEndpointMeta = (Omit<IEndpointMetaBase, 'requireCrential' | 'requir
 	secure: true,
 }) | (Omit<IEndpointMetaBase, 'requireCredential' | 'kind'> & {
 	requireCredential: true,
-	kind: (typeof permissions)[number],
+	kind: (typeof permissions)[number] | null, // null は認証済みトークン自身を扱う、スコープ不要の操作
 }) | (Omit<IEndpointMetaBase, 'requireModerator' | 'kind'> & {
 	requireModerator: true,
 	kind: (typeof permissions)[number],
