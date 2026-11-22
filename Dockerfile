@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.23
 
-ARG NODE_VERSION=26.4.0-trixie
+ARG NODE_VERSION=26.13.1-trixie
 
 # build assets & compile TypeScript
 
@@ -81,7 +81,7 @@ ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends \
-	curl ffmpeg libmimalloc-dev tini \
+	curl ffmpeg libmimalloc-dev tini zlib1g \
 	&& ln -s /usr/lib/$(uname -m)-linux-gnu/libmimalloc.so /usr/local/lib/libmimalloc.so \
 	&& groupadd -g "${GID}" misskey \
 	&& useradd -l -u "${UID}" -g "${GID}" -m -d /misskey misskey \

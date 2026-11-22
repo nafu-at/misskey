@@ -57,21 +57,27 @@ minimumReleaseAgeExclude:
   - vite # そのうち消す
   # Renovate security update: typeorm@1.1.0
   - typeorm@1.1.0
-  # Renovate security update: @fastify/static@10.1.2
-  - "@fastify/static@10.1.2"
   # Renovate security update: tar@7.5.21
   - tar@7.5.21
-  # Renovate security update: js-yaml@5.2.2
-  - js-yaml@5.2.2
 overrides:
   '@aiscript-dev/aiscript-languageserver': '-'
   '@peculiar/asn1-ecc': 2.6.1
   '@peculiar/asn1-rsa': 2.6.1
   '@peculiar/asn1-schema': 2.6.0
   '@peculiar/asn1-x509': 2.6.1
+  '@redocly/openapi-core>js-yaml': 4.3.2
+  '@misskey-dev/summaly>fastify': 5.12.8
+  '@storybook/addon-actions>uuid': 11.1.1
+  '@syuilo/aiscript>uuid': 11.1.1
+  '@tabler/icons-webfont>sharp': '-'
+  'brace-expansion@>=1 <1.1.21': 1.1.21
   'bullmq>ioredis': 5.11.1
   chokidar: 5.0.0
+  'gaxios>rimraf': 6.1.4
+  'js-beautify>glob': 14.0.6
+  'immutable@>=5 <5.1.8': 5.1.9
   lodash: 4.18.1
+  'minimatch@>=9 <11.0.1': 11.0.8
 
 patchedDependencies:
   '@misskey-dev/summaly@5.5.1': patches/@misskey-dev__summaly@5.5.1.patch

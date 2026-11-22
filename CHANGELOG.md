@@ -1,6 +1,7 @@
 ## Unreleased
 
 ### General
+- Fix: 画像処理や SAML 認証を含む依存パッケージの脆弱性を修正。Docker イメージの Node.js を 26.13.1 に更新。手動インストールでは各系列の 22.23.5、24.22.3、26.13.1 以降が必要です。
 - Fix: Dockerワークフローでブランチ名とタグ名を安全に扱うよう修正
 - Fix: Docker buildで利用するpnpmをlockfileと同じ版へ更新
 - Fix: Dockerのメモリ管理ライブラリを更新後のOSに合わせる
