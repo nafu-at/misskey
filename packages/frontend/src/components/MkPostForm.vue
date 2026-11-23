@@ -2044,6 +2044,7 @@ html[data-color-scheme=light] .preview {
 @container (max-width: 375px) {
 	.submitInner {
 		min-width: 20px;
+		min-height: 34px;
 	}
 
 	.submitButtonText {
