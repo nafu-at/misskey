@@ -82,6 +82,7 @@ ENV PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=false
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends \
 	curl ffmpeg libmimalloc-dev tini zlib1g \
+	libc-bin libc6 libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0 \
 	&& ln -s /usr/lib/$(uname -m)-linux-gnu/libmimalloc.so /usr/local/lib/libmimalloc.so \
 	&& groupadd -g "${GID}" misskey \
 	&& useradd -l -u "${UID}" -g "${GID}" -m -d /misskey misskey \
