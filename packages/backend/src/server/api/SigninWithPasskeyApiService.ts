@@ -14,6 +14,7 @@ import type {
 } from '@/models/_.js';
 import type { Config } from '@/config.js';
 import { getIpHash } from '@/misc/get-ip-hash.js';
+import { redactSigninHeaders } from '@/misc/redact-signin-headers.js';
 import type { MiLocalUser, MiUser } from '@/models/User.js';
 import { IdService } from '@/core/IdService.js';
 import { bindThis } from '@/decorators.js';
@@ -80,7 +81,7 @@ export class SigninWithPasskeyApiService {
 				id: this.idService.gen(),
 				userId: userId,
 				ip: request.ip,
-				headers: request.headers as any,
+				headers: redactSigninHeaders(request.headers),
 				success: false,
 			});
 			return error(status ?? 500, failure ?? { id: '4e30e80c-e338-45a0-8c8f-44455efa3b76' });

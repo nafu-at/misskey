@@ -7,6 +7,7 @@ import { Injectable } from '@nestjs/common';
 import type { MiSignin } from '@/models/Signin.js';
 import { bindThis } from '@/decorators.js';
 import { IdService } from '@/core/IdService.js';
+import { redactSigninHeaders } from '@/misc/redact-signin-headers.js';
 
 @Injectable()
 export class SigninEntityService {
@@ -23,7 +24,7 @@ export class SigninEntityService {
 			id: src.id,
 			createdAt: this.idService.parse(src.id).date.toISOString(),
 			ip: src.ip,
-			headers: src.headers,
+			headers: redactSigninHeaders(src.headers),
 			success: src.success,
 		};
 	}

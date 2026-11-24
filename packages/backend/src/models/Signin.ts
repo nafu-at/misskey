@@ -35,7 +35,7 @@ export class MiSignin {
 	public ip: string;
 
 	@Column('jsonb')
-	public headers: Record<string, any>;
+	public headers: Record<string, string | string[]>;
 
 	@Column('boolean')
 	public success: boolean;

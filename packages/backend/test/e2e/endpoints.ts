@@ -10,9 +10,9 @@ import { describe, beforeAll, test, expect, vi } from 'vitest';
 // node-fetch only supports it's own Blob yet
 // https://github.com/node-fetch/node-fetch/pull/1664
 import { Blob } from 'node-fetch';
-import { api, castAsError, initTestDb, post, role, sendEnvUpdateRequest, signup, simpleGet, uploadFile } from '../utils.js';
+import { api, castAsError, initTestDb, post, relativeFetch, role, sendEnvUpdateRequest, signup, simpleGet, uploadFile } from '../utils.js';
 import type * as misskey from 'misskey-js';
-import { MiUser } from '@/models/_.js';
+import { MiSignin, MiUser } from '@/models/_.js';
 
 const waitForPushToTlOptions = { timeout: 3000, interval: 25 };
 
@@ -74,6 +74,41 @@ describe('Endpoints', () => {
 	});
 
 	describe('signin-flow', () => {
+		test('ログイン履歴の保存・本人向け応答・管理向け応答で機密ヘッダーをマスクする', async () => {
+			const user = await signup();
+			const diagnostic = 'signin-history-test';
+			const response = await relativeFetch('api/signin-flow', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', cookie: 'theme=dark', 'x-build-revision': diagnostic },
+				body: JSON.stringify({ username: user.username, password: 'test' }),
+			});
+			expect(response.status).toBe(200);
+
+			const db = await initTestDb(true);
+			try {
+				const history = db.getRepository(MiSignin);
+				const stored = await vi.waitFor(async () => {
+					const rows = await history.findBy({ userId: user.id });
+					const record = rows.find(row => row.headers['x-build-revision'] === diagnostic);
+					assert.ok(record);
+					return record;
+				});
+				expect(stored.headers.cookie).toBe('[REDACTED]');
+
+				// Simulate a history row written before redaction was introduced.
+				await history.update(stored.id, { headers: { 'X-Build-Revision': diagnostic, Cookie: 'theme=dark' } });
+				const own = await api('i/signin-history', {}, user);
+				const admin = await api('admin/show-user', { userId: user.id }, alice);
+				expect(own.status).toBe(200);
+				expect(admin.status).toBe(200);
+				const expected = { id: stored.id, headers: { 'X-Build-Revision': diagnostic, Cookie: '[REDACTED]' } };
+				expect(own.body).toContainEqual(expect.objectContaining(expected));
+				expect(admin.body.signins).toContainEqual(expect.objectContaining(expected));
+			} finally {
+				await db.destroy();
+			}
+		});
+
 		test('間違ったパスワードでサインインできない', async () => {
 			const res = await api('signin-flow', {
 				username: 'test1',

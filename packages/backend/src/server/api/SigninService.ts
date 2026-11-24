@@ -12,6 +12,7 @@ import type { MiLocalUser } from '@/models/User.js';
 import { GlobalEventService } from '@/core/GlobalEventService.js';
 import { SigninEntityService } from '@/core/entities/SigninEntityService.js';
 import { bindThis } from '@/decorators.js';
+import { redactSigninHeaders } from '@/misc/redact-signin-headers.js';
 import { EmailService } from '@/core/EmailService.js';
 import { QueueService } from '@/core/QueueService.js';
 import { NotificationService } from '@/core/NotificationService.js';
@@ -44,7 +45,7 @@ export class SigninService {
 				id: this.idService.gen(),
 				userId: user.id,
 				ip: request.ip,
-				headers: request.headers as any,
+				headers: redactSigninHeaders(request.headers),
 				success: true,
 			});
 

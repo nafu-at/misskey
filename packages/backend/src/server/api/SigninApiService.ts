@@ -26,6 +26,7 @@ import { UserAuthService } from '@/core/UserAuthService.js';
 import { LoggerService } from '@/core/LoggerService.js';
 import { CaptchaService } from '@/core/CaptchaService.js';
 import { FastifyReplyError } from '@/misc/fastify-reply-error.js';
+import { redactSigninHeaders } from '@/misc/redact-signin-headers.js';
 import { RateLimiterService } from './RateLimiterService.js';
 import { TwoFactorEnrollmentService } from '@/core/TwoFactorEnrollmentService.js';
 import { SigninService } from './SigninService.js';
@@ -200,7 +201,7 @@ export class SigninApiService {
 				id: this.idService.gen(),
 				userId: user.id,
 				ip: request.ip,
-				headers: request.headers as any,
+				headers: redactSigninHeaders(request.headers),
 				success: false,
 			});
 

@@ -11,6 +11,7 @@ import { RoleService } from '@/core/RoleService.js';
 import { RoleEntityService } from '@/core/entities/RoleEntityService.js';
 import { IdService } from '@/core/IdService.js';
 import { notificationRecieveConfig } from '@/models/json-schema/user.js';
+import { redactSigninHeaders } from '@/misc/redact-signin-headers.js';
 
 export const meta = {
 	tags: ['admin'],
@@ -284,7 +285,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-
 				isHibernated: user.isHibernated,
 				lastActiveDate: user.lastActiveDate ? user.lastActiveDate.toISOString() : null,
 				moderationNote: profile.moderationNote ?? '',
-				signins,
+				signins: signins.map(signin => ({ ...signin, headers: redactSigninHeaders(signin.headers) })),
 				policies: await this.roleService.getUserPolicies(user.id),
 				roles: await this.roleEntityService.packMany(roles, me),
 				roleAssigns: roleAssigns.map(a => ({
