@@ -212,7 +212,7 @@
 		"rolldown": "1.2.6",
 		"simple-oauth2": "5.1.0",
 		"supertest": "7.2.2",
-		"vite": "8.2.2",
+		"vite": "8.2.6",
 		"vitest": "4.1.12",
 		"vitest-mock-extended": "5.1.1"
 	}
