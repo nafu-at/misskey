@@ -47,7 +47,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 							{{ submitText }}
 						</span>
 					</template>
-					<i style="margin-left: 6px;" :class="submitIcon"></i>
+					<i :class="submitIcon"></i>
 				</div>
 			</button>
 		</div>
@@ -1765,7 +1765,7 @@ defineExpose({
 	color: var(--MI_THEME-fgOnAccent);
 	background: linear-gradient(90deg, var(--MI_THEME-buttonGradateA), var(--MI_THEME-buttonGradateB));
 	display: flex;
-	gap: 6px;
+	gap: 12px;
 	align-items: center;
 	justify-content: center;
 }
@@ -2045,6 +2045,8 @@ html[data-color-scheme=light] .preview {
 	.submitInner {
 		min-width: 20px;
 		min-height: 34px;
+		padding-inline: 15px;
+		gap: 6px;
 	}
 
 	.submitButtonText {
