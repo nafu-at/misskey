@@ -15,9 +15,10 @@ import { popup, success, alert } from '@/os.js';
 import { unisonReload, reloadChannel } from '@/utility/unison-reload.js';
 import { prefer } from '@/preferences.js';
 import { store } from '@/store.js';
-import { $i } from '@/i.js';
+import { $i, cachedAccount, isConsentPage } from '@/i.js';
 
 type AccountWithToken = Misskey.entities.MeDetailed & { token: string };
+export type ConsentAccount = Pick<AccountWithToken, 'id' | 'username'>;
 
 export async function getAccounts(): Promise<{
 	host: string;
@@ -60,14 +61,29 @@ export async function removeAccount(host: string, id: AccountWithToken['id']) {
 }
 
 let redirectingToEnrollment = false;
+const enrollmentSigninPath = '/?required2fa=1';
+
+export function shouldKeepConsentOnReload(path: string | null): boolean {
+	if (!isConsentPage()) return false;
+	if (path === enrollmentSigninPath) return true;
+	// A same-account sign-in in another tab must not replace the consent document.
+	// A sign-out or a switch to a different account still takes effect here.
+	return path === null && cachedAccount !== null && miLocalStorage.getItemAsJson('account')?.id === cachedAccount.id;
+}
 
 export async function requestTwoFactorSignin(token: string) {
 	if (!$i || token !== $i.token || redirectingToEnrollment) return;
 	redirectingToEnrollment = true;
+	const saved = miLocalStorage.getItemAsJson('account');
+	if (saved?.id !== $i.id || saved.token !== token) {
+		// Another tab already replaced this credential while the request was in flight.
+		window.location.reload();
+		return;
+	}
 	miLocalStorage.removeItem('account');
 	window.document.cookie = 'token=; max-age=0; path=/';
 	await removeAccount(host, $i.id);
-	unisonReload('/?required2fa=1');
+	unisonReload(enrollmentSigninPath);
 }
 
 const isAccountDeleted = Symbol('isAccountDeleted');
@@ -190,6 +206,11 @@ export async function refreshCurrentAccount() {
 		});
 }
 
+function saveCurrentAccount(user: Misskey.entities.MeDetailed, token: string) {
+	miLocalStorage.setItemAsJson('account', { ...user, token });
+	window.document.cookie = `token=${token}; path=/; max-age=31536000`; // bull dashboardの認証とかで使う
+}
+
 export async function login(token: AccountWithToken['token'], redirect?: string) {
 	const showing = ref(true);
 	await popup(defineAsyncComponent(() => import('@/components/MkWaitingDialog.vue')), {
@@ -216,13 +237,7 @@ export async function login(token: AccountWithToken['token'], redirect?: string)
 	});
 	if (!me) return;
 
-	miLocalStorage.setItem('account', JSON.stringify({
-		...me,
-		token,
-	}));
-
-	window.document.cookie = `token=${token}; path=/; max-age=31536000`; // bull dashboardの認証とかで使う
-
+	saveCurrentAccount(me, token);
 	await addAccount(host, me, token);
 
 	if (redirect) {
@@ -358,13 +373,15 @@ export async function getAccountMenu(opts: {
 	return [...(opts.includeCurrentAccount ? [createItem(host, $i.id, $i.username, $i, $i.token)] : []), ...accountItems];
 }
 
-export function getAccountWithSigninDialog(initialUsername?: string): Promise<{ id: string, token: string } | null> {
+export function getAccountWithSigninDialog(initialUsername?: string, expectedId?: string): Promise<{ id: string, token: string, user: Misskey.entities.MeDetailed } | null> {
 	return new Promise((resolve) => {
 		popup(defineAsyncComponent(() => import('@/components/MkSigninDialog.vue')), { initialUsername }, {
 			done: async (res: Misskey.entities.SigninFlowResponse & { finished: true }) => {
-				const user = await fetchAccount(res.i, res.id, true);
+				if (expectedId !== undefined && res.id !== expectedId) return resolve(null);
+				const user = await fetchAccount(res.i, res.id, true).catch(() => null);
+				if (!user || user.id !== res.id) return resolve(null);
 				await addAccount(host, user, res.i);
-				resolve({ id: res.id, token: res.i });
+				resolve({ id: user.id, token: res.i, user });
 			},
 			cancelled: () => {
 				resolve(null);
@@ -373,15 +390,20 @@ export function getAccountWithSigninDialog(initialUsername?: string): Promise<{ 
 	});
 }
 
-export async function reauthenticateConsentAccount(token: string): Promise<string | null> {
-	if ($i?.token === token) {
+export async function reauthenticateConsentAccount(account: ConsentAccount, token: string): Promise<string | null> {
+	const current = cachedAccount?.id === account.id && cachedAccount.token === token ? cachedAccount : null;
+	if (current && $i) {
 		await requestTwoFactorSignin(token);
 		return null;
 	}
-	const account = (await getAccounts()).find(entry => entry.token === token);
-	if (!account) return null;
-	const signedIn = await getAccountWithSigninDialog(account.username);
-	return signedIn?.id === account.id ? signedIn.token : null;
+	const signedIn = await getAccountWithSigninDialog(account.username, account.id);
+	if (!signedIn) return null;
+	if (current) {
+		Object.assign(current, signedIn.user, { token: signedIn.token });
+		const saved = miLocalStorage.getItemAsJson('account');
+		if (!saved || saved.id === current.id) saveCurrentAccount(signedIn.user, signedIn.token);
+	}
+	return signedIn.token;
 }
 
 export function getAccountWithSignupDialog(): Promise<{ id: string, token: string } | null> {

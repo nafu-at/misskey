@@ -18,7 +18,7 @@ import components from '@/components/index.js';
 import { themeManager } from '@/theme.js';
 import { isDeviceDarkmode } from '@/utility/is-device-darkmode.js';
 import { i18n } from '@/i18n.js';
-import { refreshCurrentAccount, login, updateCurrentAccountPartial } from '@/accounts.js';
+import { refreshCurrentAccount, login, shouldKeepConsentOnReload, updateCurrentAccountPartial } from '@/accounts.js';
 import { store } from '@/store.js';
 import { fetchInstance, instance } from '@/instance.js';
 import { updateDeviceKind } from '@/utility/device-kind.js';
@@ -32,7 +32,7 @@ import { fetchCustomEmojis } from '@/custom-emojis.js';
 import { prefer } from '@/preferences.js';
 import { sensitiveContentConsent } from '@/utility/sensitive-content-consent.js';
 import { getDeviceId, setUserProperties } from '@/utility/tracking-user-properties.js';
-import { $i } from '@/i.js';
+import { $i, isConsentPage } from '@/i.js';
 import { launchPlugins } from '@/plugin.js';
 import { mainRouter } from '@/router.js';
 import { createNiraxGtag } from '@/utility/create-nirax-gtag.js';
@@ -113,6 +113,7 @@ export async function common(createVue: () => Promise<App<Element>>) {
 
 	// 一斉リロード
 	reloadChannel.addEventListener('message', path => {
+		if (shouldKeepConsentOnReload(path)) return;
 		if (path !== null) window.location.href = path;
 		else window.location.reload();
 	});
@@ -164,7 +165,7 @@ export async function common(createVue: () => Promise<App<Element>>) {
 	//#region loginId
 	const loginId = params.get('loginId');
 
-	if (loginId) {
+	if (loginId && !isConsentPage()) {
 		const target = getUrlWithoutLoginId(window.location.href);
 
 		if (!$i || $i.id !== loginId) {

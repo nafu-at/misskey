@@ -53,6 +53,12 @@ function doPost(token: string, decision: 'accept' | 'deny') {
 	transactionId.value = transactionIdMeta?.content ?? '';
 	form.appendChild(transactionId);
 
+	const returnToConsent = window.document.createElement('input');
+	returnToConsent.type = 'hidden';
+	returnToConsent.name = 'return_to_consent';
+	returnToConsent.value = '1';
+	form.appendChild(returnToConsent);
+
 	if (decision === 'deny') {
 		const cancel = window.document.createElement('input');
 		cancel.type = 'hidden';

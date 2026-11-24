@@ -118,7 +118,8 @@ SPDX-License-Identifier: AGPL-3.0-only
 import { ref, computed } from 'vue';
 import * as Misskey from 'misskey-js';
 import MkButton from '@/components/MkButton.vue';
-import { $i } from '@/i.js';
+import { cachedAccount, isConsentPage } from '@/i.js';
+import type { ConsentAccount } from '@/accounts.js';
 import { getAccounts, getAccountWithSigninDialog, getAccountWithSignupDialog, reauthenticateConsentAccount } from '@/accounts.js';
 import { i18n } from '@/i18n.js';
 import * as os from '@/os.js';
@@ -134,7 +135,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-	(ev: 'accept', token: string): void;
+	(ev: 'accept', token: string, account: ConsentAccount): void;
 	(ev: 'deny', token: string): void;
 }>();
 
@@ -151,8 +152,8 @@ async function init() {
 
 	users.value.clear();
 
-	if ($i) {
-		users.value.set($i.id, $i);
+	if (cachedAccount) {
+		users.value.set(cachedAccount.id, cachedAccount);
 	}
 
 	const accounts = await getAccounts();
@@ -248,21 +249,22 @@ async function clickAccept() {
 	try {
 		await misskeyApi('i', {}, user.token);
 	} catch (error) {
-		if ((error as Misskey.api.APIError).code !== 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
+		const code = (error as Misskey.api.APIError).code;
+		if (code !== 'TWO_FACTOR_ENROLLMENT_REQUIRED' && !(code === 'AUTHENTICATION_FAILED' && isConsentPage())) {
 			showUI('failed');
 			return;
 		}
-		const token = await reauthenticateConsentAccount(user.token);
+		const token = await reauthenticateConsentAccount(user, user.token);
 		if (!token) {
 			waiting.value = false;
 			return;
 		}
 		user.token = token;
 	}
-	emit('accept', user.token);
+	emit('accept', user.token, user);
 }
 
-function showUI(state: 'success' | 'denied' | 'failed') {
+function showUI(state: 'accountSelect' | 'success' | 'denied' | 'failed') {
 	phase.value = state;
 	waiting.value = false;
 }

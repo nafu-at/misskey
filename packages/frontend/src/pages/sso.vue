@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: syuilo and misskey-project
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 <template>
 <div>
 	<MkAnimBg style="position: fixed; top: 0;"/>
@@ -6,6 +11,7 @@
 			<MkAuthConfirm
 				ref="authRoot"
 				:name="name"
+				:manualWaiting="submitting"
 				@accept="onAccept"
 				@deny="onDeny"
 			/>
@@ -15,11 +21,12 @@
 </template>
 
 <script lang="ts" setup>
-import { nextTick, onMounted, useTemplateRef } from 'vue';
+import { nextTick, onMounted, ref, useTemplateRef } from 'vue';
 import MkAnimBg from '@/components/MkAnimBg.vue';
 import { definePage } from '@/page.js';
 import MkAuthConfirm from '@/components/MkAuthConfirm.vue';
-import { $i } from '@/i.js';
+import { cachedAccount } from '@/i.js';
+import type { ConsentAccount } from '@/accounts.js';
 import { reauthenticateConsentAccount } from '@/accounts.js';
 import { generateClientTransactionId } from '@/utility/misskey-api.js';
 
@@ -33,8 +40,19 @@ const kind = window.document.querySelector<HTMLMetaElement>('meta[name="misskey:
 const prompt = window.document.querySelector<HTMLMetaElement>('meta[name="misskey:sso:prompt"]')?.content;
 
 const authRoot = useTemplateRef('authRoot');
+const submitting = ref(false);
 
-async function onAccept(token: string, retry = true): Promise<void> {
+async function onAccept(token: string, account: ConsentAccount) {
+	if (submitting.value) return;
+	submitting.value = true;
+	try {
+		await authorize(token, account, true);
+	} finally {
+		submitting.value = false;
+	}
+}
+
+async function authorize(token: string, account: ConsentAccount, retry: boolean): Promise<void> {
 	const result = await window.fetch(`/sso/${kind}/authorize`, {
 		method: 'POST',
 		credentials: 'include',
@@ -49,9 +67,11 @@ async function onAccept(token: string, retry = true): Promise<void> {
 	}).then(async res => {
 		const body = await res.json();
 		if (res.ok) return body;
-		if (retry && body.error?.code === 'TWO_FACTOR_ENROLLMENT_REQUIRED') {
-			const credential = await reauthenticateConsentAccount(token);
-			if (credential) return onAccept(credential, false);
+		if (retry && (body.error?.code === 'TWO_FACTOR_ENROLLMENT_REQUIRED' || body.error?.code === 'INVALID_LOGIN_TOKEN')) {
+			const credential = await reauthenticateConsentAccount(account, token);
+			if (credential) return authorize(credential, account, false);
+			authRoot.value?.showUI('accountSelect');
+			return;
 		}
 		authRoot.value?.showUI('failed');
 	}).catch(() => {
@@ -91,8 +111,8 @@ function onDeny(token: string) {
 
 onMounted(() => {
 	nextTick(() => {
-		if ($i && prompt === 'none') {
-			onAccept($i.token);
+		if (cachedAccount && prompt === 'none') {
+			onAccept(cachedAccount.token, cachedAccount);
 		}
 	});
 });

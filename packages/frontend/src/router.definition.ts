@@ -283,6 +283,9 @@ export const ROUTE_DEF: RouteDef[] = [{
 	path: '/oauth/authorize',
 	component: page(() => import('@/pages/oauth.vue')),
 }, {
+	path: '/oauth/decision',
+	component: page(() => import('@/pages/oauth.vue')),
+}, {
 	path: '/sso/:kind/:serviceId',
 	component: page(() => import('@/pages/sso.vue')),
 }, {

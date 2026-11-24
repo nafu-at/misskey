@@ -123,17 +123,21 @@ describe('Role-required two-factor enrollment', () => {
 			binding: 'post', useCertificate: true, signatureAlgorithm: 'RS256',
 		}, root);
 		assert.equal(provider.status, 200);
-		async function consent(token: string) {
+		async function beginConsent() {
 			const transactionId = randomUUID();
-			// Supply a pending consent transaction for the provider fixture.
-			await redis.set(`sso:${type}:transaction:${transactionId}`, JSON.stringify({ serviceId: provider.body.id }), 'EX', 60);
+			await redis.set(`sso:${type}:transaction:${transactionId}`, JSON.stringify({
+				serviceId: provider.body.id, flowResult: { extract: { request: { id: '_request' } } }, relayState: 'consent',
+			}), 'EX', 60);
+			return transactionId;
+		}
+		function consent(transactionId: string, token: string) {
 			return relativeFetch(`sso/${type}/authorize`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ transaction_id: transactionId, login_token: token }),
 			});
 		}
 		async function issueJwt(token: string) {
-			const response = await consent(token);
+			const response = await consent(await beginConsent(), token);
 			assert.equal(response.status, 200);
 			return ((await response.json()) as { context: { jwt: string } }).context.jwt;
 		}
@@ -143,12 +147,18 @@ describe('Role-required two-factor enrollment', () => {
 		const originalJwt = type === 'jwt' ? await issueJwt(user.token) : null;
 		if (originalJwt) expect((await verify(originalJwt)).status).toBe(200);
 		await assign(user);
-		const denied = await consent(user.token);
+		const transactionId = await beginConsent();
+		const expiredId = await beginConsent();
+		const denied = await consent(transactionId, user.token);
 		expect(denied.status).toBe(403);
 		expect(await denied.json()).toMatchObject({ error: { code: 'TWO_FACTOR_ENROLLMENT_REQUIRED' } });
+		if (originalJwt) expect((await verify(originalJwt)).status).toBe(403);
+		const enrolled = await confirm(await begin(user));
+		await redis.expire(`sso:${type}:transaction:${expiredId}`, 0);
+		expect((await consent(expiredId, enrolled.body.i)).status).toBe(403);
+		expect((await consent(transactionId, enrolled.body.i)).status).toBe(200);
+		expect((await consent(transactionId, enrolled.body.i)).status).toBe(403);
 		if (originalJwt) {
-			expect((await verify(originalJwt)).status).toBe(403);
-			const enrolled = await confirm(await begin(user));
 			const revoked = await verify(originalJwt);
 			expect(revoked.status).toBe(400);
 			expect(await revoked.json()).toMatchObject({ error: { code: 'INVALID_JWT' } });

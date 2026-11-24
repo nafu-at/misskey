@@ -84,13 +84,14 @@ function getMeta(html: string): { transactionId: string | undefined, clientName:
 	};
 }
 
-function fetchDecision(transactionId: string, user: misskey.entities.SignupResponse, { cancel }: { cancel?: boolean } = {}): Promise<Response> {
+function fetchDecision(transactionId: string, user: { token: string }, { cancel, returnToConsent }: { cancel?: boolean, returnToConsent?: boolean } = {}): Promise<Response> {
 	return fetch(new URL('/oauth/decision', host), {
 		method: 'post',
 		body: new URLSearchParams({
 			transaction_id: transactionId,
 			login_token: user.token,
 			cancel: cancel ? 'cancel' : '',
+			...(returnToConsent ? { return_to_consent: '1' } : {}),
 		}),
 		redirect: 'manual',
 		headers: {
@@ -912,12 +913,27 @@ describe('OAuth', () => {
 		const required = await role(alice, {}, { required2fa: { useDefault: false, priority: 1, value: true } });
 		assert.strictEqual((await api('admin/roles/assign', { roleId: required.id, userId: user.id }, alice)).status, 204);
 		const consent = await fetch(client.authorizeURL({ redirect_uri, scope: 'read:account', state: 'consent', code_challenge, code_challenge_method: 'S256' } as AuthorizationParamsExtended));
-		const denied = await fetchDecisionFromResponse(consent, user);
+		const { transactionId } = getMeta(await consent.text());
+		assert.ok(transactionId);
+		const denied = await fetchDecision(transactionId, user);
 		await assertDirectError(denied, 403, 'access_denied');
+		const retry = await fetchDecision(transactionId, user, { returnToConsent: true });
+		assert.strictEqual(retry.status, 403);
+		assert.strictEqual(retry.headers.get('cache-control'), 'no-store');
+		assert.strictEqual(getMeta(await retry.text()).transactionId, transactionId);
 		const enrollment = (await api('signin-flow', { username: user.username, password: 'test' })).body;
 		assert.ok(!enrollment.finished && enrollment.next === 'enroll-2fa');
 		const otp = OTPAuth.URI.parse(enrollment.url).generate();
-		assert.strictEqual((await api('signin-enroll-2fa', { ticket: enrollment.ticket, code: otp })).status, 200);
+		const enrolled = await api('signin-enroll-2fa', { ticket: enrollment.ticket, code: otp });
+		assert.strictEqual(enrolled.status, 200);
+		const stale = await fetchDecision(transactionId, user, { returnToConsent: true });
+		assert.strictEqual(stale.status, 403);
+		assert.strictEqual(getMeta(await stale.text()).transactionId, transactionId);
+		const decisions = await Promise.all([1, 2].map(() => fetchDecision(transactionId, { token: enrolled.body.i })));
+		assert.deepStrictEqual(decisions.map(r => r.status).sort(), [302, 403]);
+		const location = new URL(decisions.find(r => r.status === 302)!.headers.get('location')!);
+		assert.strictEqual(location.searchParams.get('state'), 'consent');
+		assert.ok(location.searchParams.get('code'));
 		await assert.rejects(client.getToken({ code, redirect_uri, code_verifier } as AuthorizationTokenConfigExtended),
 			(err: GetTokenError) => err.data.payload.error === 'invalid_grant');
 	});

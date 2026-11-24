@@ -31,7 +31,6 @@ import { IdService } from '@/core/IdService.js';
 import { RoleService } from '@/core/RoleService.js';
 import { legacyCredentialRotationKey, tokenFingerprint } from '@/core/TwoFactorEnrollmentService.js';
 import { MiUser, MiAccessToken } from '@/models/_.js';
-import type { MiLocalUser } from '@/models/User.js';
 import { LoggerService } from '@/core/LoggerService.js';
 import Logger from '@/logger.js';
 import { StatusError } from '@/misc/status-error.js';
@@ -507,14 +506,15 @@ export class OAuth2ProviderService {
 		};
 	}
 
-	async #findUserByLoginToken(loginToken: string): Promise<MiLocalUser> {
-		const user = await this.usersRepository.findOneBy({ token: loginToken }) as MiLocalUser | null;
-		if (!user) {
-			throw new InvalidRequestError('No such user');
-		}
-
-		if (await this.roleService.requiresTwoFactorEnrollment(user.id)) throw createForbiddenAccessDenied('Two-factor enrollment is required');
-		return user;
+	async #renderConsent(reply: FastifyReply, transactionId: string, { client, request }: AuthorizationTransaction) {
+		applyNoStore(reply);
+		return HtmlTemplateService.replyHtml(reply, OAuthPage({
+			...await this.htmlTemplateService.getCommonData(),
+			transactionId,
+			clientName: client.name,
+			clientLogo: client.logo ?? undefined,
+			scope: request.scopes,
+		}));
 	}
 
 	async #revokeGrantCode(granted: AuthorizationCodeGrant, code: string): Promise<void> {
@@ -562,21 +562,12 @@ export class OAuth2ProviderService {
 				const authorizationRequest = this.#finalizeAuthorizationRequest(seed);
 
 				const transactionId = secureRndstr(128);
-				await this.redisClient.set(`oauth2:transaction:${transactionId}`, JSON.stringify({
-					client: clientInfo,
-					request: authorizationRequest,
-				} satisfies AuthorizationTransaction), 'EX', 60 * 5);
+				const transaction = { client: clientInfo, request: authorizationRequest };
+				await this.redisClient.set(`oauth2:transaction:${transactionId}`, JSON.stringify(transaction), 'EX', 60 * 5);
 
 				this.#logger.info(`Rendering authorization page for "${clientInfo.name}"`);
 
-				applyNoStore(reply);
-				return await HtmlTemplateService.replyHtml(reply, OAuthPage({
-					...await this.htmlTemplateService.getCommonData(),
-					transactionId,
-					clientName: clientInfo.name,
-					clientLogo: clientInfo.logo ?? undefined,
-					scope: authorizationRequest.scopes,
-				}));
+				return await this.#renderConsent(reply, transactionId, transaction);
 			} catch (error) {
 				const OAuthProviderError = normalizeOAuthProviderError(error);
 				if (validatedRedirectUri && OAuthProviderError.allow_redirect && OAuthProviderError.error !== 'unsupported_response_type') {
@@ -599,7 +590,8 @@ export class OAuth2ProviderService {
 					throw new InvalidRequestError('Missing transaction ID');
 				}
 
-				const transactionJson = await this.redisClient.getdel(`oauth2:transaction:${transactionId}`);
+				const key = `oauth2:transaction:${transactionId}`;
+				const transactionJson = await this.redisClient.get(key);
 				if (!transactionJson) {
 					throw createForbiddenAccessDenied('Invalid or expired transaction ID');
 				}
@@ -607,6 +599,18 @@ export class OAuth2ProviderService {
 
 				const cancel = !!firstValue(body.cancel);
 				this.#logger.info(`Received the decision. Cancel: ${cancel}`);
+				const loginToken = firstValue(body.login_token) ?? '';
+				const user = !cancel && loginToken ? await this.usersRepository.findOneBy({ token: loginToken }) : null;
+				if (!cancel && loginToken && (!user || await this.roleService.requiresTwoFactorEnrollment(user.id))) {
+					if (firstValue(body.return_to_consent) === '1') {
+						reply.code(403);
+						return await this.#renderConsent(reply, transactionId, transaction);
+					}
+					if (user) throw createForbiddenAccessDenied('Two-factor enrollment is required');
+				}
+
+				// Enrollment keeps the original TTL. Only one final decision can claim the transaction.
+				if (!await this.redisClient.del(key)) throw createForbiddenAccessDenied('Invalid or expired transaction ID');
 				if (cancel) {
 					redirectWithQuery(reply, transaction.request.redirectUri, appendIssuer({
 						error: 'access_denied',
@@ -615,14 +619,7 @@ export class OAuth2ProviderService {
 					return;
 				}
 
-				const loginToken = firstValue(body.login_token);
-				if (!loginToken) {
-					throw new InvalidRequestError('No user');
-				}
-
-				this.#logger.info(`Checking the user before sending authorization code to ${transaction.client.id}`);
-				const user = await this.#findUserByLoginToken(loginToken);
-
+				if (!user) throw new InvalidRequestError(loginToken ? 'No such user' : 'No user');
 				this.#logger.info(`Sending authorization code on behalf of user ${user.id} to ${transaction.client.id} through ${transaction.request.redirectUri}, with scope: [${transaction.request.scopes}]`);
 
 				const code = secureRndstr(128);
