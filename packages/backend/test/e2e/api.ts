@@ -8,6 +8,7 @@ process.env.NODE_ENV = 'test';
 import * as assert from 'assert';
 import { describe, beforeAll, test } from 'vitest';
 import { IncomingMessage } from 'node:http';
+import { createHash } from 'node:crypto';
 import {
 	api,
 	connectStream,
@@ -114,6 +115,19 @@ describe('API', () => {
 		assert.strictEqual((await api('i/revoke-token', { token: second }, { token: first })).status, 403);
 		assert.strictEqual((await api('i/revoke-token', { token: first }, { token: first })).status, 204);
 		assert.strictEqual((await api('i/revoke-token', { token: second }, { token: second })).status, 204);
+	});
+
+	test('旧形式のアプリも連携時に取得した値で自身のトークンを失効できる', async () => {
+		const app = await api('app/create', { name: 'legacy', description: 'test', permission: ['read:account'] }, bob);
+		const appSecret = app.body.secret!;
+		const session = await api('auth/session/generate', { appSecret });
+		const token = session.body.token;
+		assert.strictEqual((await api('auth/accept', { token }, bob)).status, 204);
+		const key = await api('auth/session/userkey', { appSecret, token });
+		const accessToken = key.body.accessToken;
+		const credential = { token: createHash('sha256').update(accessToken + appSecret).digest('hex') };
+		assert.strictEqual((await api('i/revoke-token', { token: accessToken }, credential)).status, 204);
+		assert.strictEqual((await api('i', {}, credential)).status, 401);
 	});
 
 	test('管理者専用のAPIのアクセス制限', async () => {

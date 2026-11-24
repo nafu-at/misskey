@@ -6,6 +6,7 @@
 process.env.NODE_ENV = 'test';
 
 import * as assert from 'assert';
+import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, beforeAll, test } from 'vitest';
 import { WebSocket } from 'ws';
@@ -836,6 +837,28 @@ describe('Streaming', () => {
 
 				assert.strictEqual(fired, false);
 			});
+		});
+
+		test('連携解除は同じトークンの全接続だけを切断する', async () => {
+			const token = await createAppToken(ayano, ['read:account']);
+			const other = await createAppToken(ayano, ['read:account']);
+			const sockets: WebSocket[] = [];
+			try {
+				for (const auth of [{ token }, { token, bearer: true }, { token: other }, ayano]) {
+					sockets.push(await connectStream(auth, 'main', () => {}));
+				}
+				const closed = Promise.all(sockets.slice(0, 2).map(socket => once(socket, 'close')));
+				const revoked = await api('i/revoke-token', { token }, ayano);
+				assert.strictEqual(revoked.status, 204);
+				await closed;
+				for (const socket of sockets.slice(2)) {
+					const pong = once(socket, 'pong');
+					socket.ping();
+					await pong;
+				}
+			} finally {
+				for (const socket of sockets) socket.terminate();
+			}
 		});
 
 		test('Authentication', async () => {

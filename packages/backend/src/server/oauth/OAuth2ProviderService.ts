@@ -29,6 +29,7 @@ import { bindThis } from '@/decorators.js';
 import type { AccessTokensRepository, IndieAuthClientsRepository, UserProfilesRepository, UsersRepository } from '@/models/_.js';
 import { IdService } from '@/core/IdService.js';
 import { RoleService } from '@/core/RoleService.js';
+import { AccessTokenService } from '@/core/AccessTokenService.js';
 import { legacyCredentialRotationKey, tokenFingerprint } from '@/core/TwoFactorEnrollmentService.js';
 import { MiUser, MiAccessToken } from '@/models/_.js';
 import { LoggerService } from '@/core/LoggerService.js';
@@ -416,6 +417,7 @@ export class OAuth2ProviderService {
 		private idService: IdService,
 		private httpRequestService: HttpRequestService,
 		private roleService: RoleService,
+		private accessTokenService: AccessTokenService,
 		private htmlTemplateService: HtmlTemplateService,
 		loggerService: LoggerService,
 	) {
@@ -524,7 +526,7 @@ export class OAuth2ProviderService {
 		const latestJson = await this.redisClient.get(`oauth2:authorization:${code}`);
 		const latest = latestJson ? JSON.parse(latestJson) as AuthorizationCodeGrant : granted;
 		if (latest.grantedToken) {
-			await this.accessTokensRepository.delete({ token: latest.grantedToken });
+			await this.accessTokenService.revoke({ token: latest.grantedToken });
 		}
 	}
 
@@ -817,7 +819,7 @@ export class OAuth2ProviderService {
 				const grantedState = await this.redisClient.get(`oauth2:authorization:${code}:state`);
 				if (!saved || grantedState !== 'used') {
 					this.#logger.info('Canceling the token as the authorization code was revoked in parallel during the process.');
-					await this.accessTokensRepository.delete({ token: accessToken });
+					await this.accessTokenService.revoke({ token: accessToken });
 					throw new InvalidGrantError('grant request is invalid');
 				}
 

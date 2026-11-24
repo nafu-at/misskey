@@ -17,6 +17,7 @@ import { WebhookTestService } from '@/core/WebhookTestService.js';
 import { FlashService } from '@/core/FlashService.js';
 import { ChannelMutingService } from '@/core/ChannelMutingService.js';
 import { AccountMoveService } from './AccountMoveService.js';
+import { AccessTokenService } from './AccessTokenService.js';
 import { AccountUpdateService } from './AccountUpdateService.js';
 import { SensitiveMediaDetectionService } from './SensitiveMediaDetectionService.js';
 import { AnnouncementService } from './AnnouncementService.js';
@@ -319,6 +320,7 @@ const $ApQuestionService: Provider = { provide: 'ApQuestionService', useExisting
 		LoggerService,
 		AbuseReportService,
 		AbuseReportNotificationService,
+		AccessTokenService,
 		AccountMoveService,
 		AccountUpdateService,
 		SensitiveMediaDetectionService,
@@ -624,6 +626,7 @@ const $ApQuestionService: Provider = { provide: 'ApQuestionService', useExisting
 		LoggerService,
 		AbuseReportService,
 		AbuseReportNotificationService,
+		AccessTokenService,
 		AccountMoveService,
 		AccountUpdateService,
 		SensitiveMediaDetectionService,

@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Endpoint } from '@/server/api/endpoint-base.js';
-import type { AccessTokensRepository } from '@/models/_.js';
-import type { MiAccessToken } from '@/models/AccessToken.js';
-import { DI } from '@/di-symbols.js';
+import { AccessTokenService } from '@/core/AccessTokenService.js';
 import { ApiError } from '../../error.js';
 
 export const meta = {
@@ -49,26 +47,22 @@ export const paramDef = {
 @Injectable()
 export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-disable-line import/no-default-export
 	constructor(
-		@Inject(DI.accessTokensRepository)
-		private accessTokensRepository: AccessTokensRepository,
+		private accessTokenService: AccessTokenService,
 	) {
 		super(meta, paramDef, async (ps, me, token) => {
-			let target: MiAccessToken | null = null;
-			if ('tokenId' in ps) {
-				target = await this.accessTokensRepository.findOneBy({ id: ps.tokenId, userId: me.id });
-			} else {
-				if (ps.token == null || ps.token === '') return;
-				target = await this.accessTokensRepository.findOneBy({ token: ps.token, userId: me.id });
-			}
-
-			if (target == null) return;
+			if (!('tokenId' in ps) && !ps.token) return;
+			const target = 'tokenId' in ps ? { id: ps.tokenId } : { token: ps.token! };
 
 			// サードパーティアプリ (アクセストークン) からのリクエストでは、いま使われているトークン自身のみ失効できる
-			if (token != null && token.id !== target.id) {
-				throw new ApiError(meta.errors.permissionDenied);
+			if (token != null) {
+				const targetId = await this.accessTokenService.findOwnedId(target, me.id);
+				if (targetId == null) return;
+				if (targetId !== token.id) throw new ApiError(meta.errors.permissionDenied);
+				await this.accessTokenService.revoke({ id: targetId, userId: me.id });
+				return;
 			}
 
-			await this.accessTokensRepository.delete({ id: target.id });
+			await this.accessTokenService.revoke({ ...target, userId: me.id });
 		});
 	}
 }

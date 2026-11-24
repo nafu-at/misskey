@@ -12,8 +12,10 @@ import type { MiAccessToken } from '@/models/_.js';
 import { bindThis } from '@/decorators.js';
 import { MiLocalUser } from '@/models/User.js';
 import { RoleService } from '@/core/RoleService.js';
+import { AccessTokenService } from '@/core/AccessTokenService.js';
 import { UserService } from '@/core/UserService.js';
 import { AuthenticateService, AuthenticationError } from './AuthenticateService.js';
+import { ApiLoggerService } from './ApiLoggerService.js';
 import MainStreamConnection, { ConnectionRequest } from './stream/Connection.js';
 import type * as http from 'node:http';
 import { ContextIdFactory, ModuleRef } from '@nestjs/core';
@@ -21,8 +23,9 @@ import { ContextIdFactory, ModuleRef } from '@nestjs/core';
 @Injectable()
 export class StreamingApiServerService {
 	#wss: WebSocket.WebSocketServer;
-	#connections = new Map<WebSocket.WebSocket, { lastActive: number; userId?: string }>();
+	#connections = new Map<WebSocket.WebSocket, { lastActive: number; userId?: string; accessTokenId?: string }>();
 	#cleanConnectionsIntervalId: NodeJS.Timeout | null = null;
+	#checkingAccessTokens = false;
 
 	constructor(
 		@Inject(DI.redisForSub)
@@ -30,6 +33,8 @@ export class StreamingApiServerService {
 
 		private moduleRef: ModuleRef,
 		private authenticateService: AuthenticateService,
+		private accessTokenService: AccessTokenService,
+		private apiLoggerService: ApiLoggerService,
 		private usersService: UserService,
 		private roleService: RoleService,
 	) {
@@ -115,6 +120,10 @@ export class StreamingApiServerService {
 					for (const [ws, state] of this.#connections) {
 						if (state.userId === body.id) ws.terminate();
 					}
+				} else if (type === 'accessTokenRevoked') {
+					for (const [ws, state] of this.#connections) {
+						if (state.accessTokenId === body.id) ws.terminate();
+					}
 				} else if (['userRoleAssigned', 'userRoleUnassigned', 'userInlinePoliciesUpdated', 'localUserUpdated'].includes(type)) {
 					this.recheckEnrollment(body.userId ?? body.id);
 				} else if (['roleCreated', 'roleUpdated', 'roleDeleted', 'policiesUpdated'].includes(type)) {
@@ -138,7 +147,7 @@ export class StreamingApiServerService {
 				ev.emit(data.channel, data.message);
 			}
 
-			const state = { lastActive: Date.now(), userId: user?.id };
+			const state = { lastActive: Date.now(), userId: user?.id, accessTokenId: stream.token?.id };
 			this.#connections.set(connection, state);
 
 			const userUpdateIntervalId = user ? setInterval(() => {
@@ -157,8 +166,20 @@ export class StreamingApiServerService {
 			// initialization must win before the connection can receive any events.
 			if (user) {
 				try {
-					const [current] = await this.authenticateService.authenticate(token);
-					if (current?.id !== user.id || await this.roleService.requiresTwoFactorEnrollment(user.id)) {
+					if (state.accessTokenId) {
+						const active = await this.accessTokenService.findActiveIds([state.accessTokenId]);
+						if (!active.has(state.accessTokenId)) {
+							connection.terminate();
+							return;
+						}
+					} else {
+						const [current] = await this.authenticateService.authenticate(token);
+						if (current?.id !== user.id) {
+							connection.terminate();
+							return;
+						}
+					}
+					if (await this.roleService.requiresTwoFactorEnrollment(user.id)) {
 						connection.close(1008, 'TWO_FACTOR_ENROLLMENT_REQUIRED');
 						return;
 					}
@@ -185,6 +206,7 @@ export class StreamingApiServerService {
 		this.#cleanConnectionsIntervalId = setInterval(() => {
 			const now = Date.now();
 			this.recheckEnrollment();
+			void this.recheckAccessTokens();
 			for (const [connection, { lastActive }] of this.#connections.entries()) {
 				if (now - lastActive > 1000 * 60 * 2) {
 					connection.terminate();
@@ -194,6 +216,38 @@ export class StreamingApiServerService {
 				}
 			}
 		}, 1000 * 60);
+	}
+
+	private async recheckAccessTokens(): Promise<void> {
+		if (this.#checkingAccessTokens) return;
+		const socketsByToken = new Map<string, WebSocket.WebSocket[]>();
+		for (const [socket, { accessTokenId }] of this.#connections) {
+			if (!accessTokenId) continue;
+			const sockets = socketsByToken.get(accessTokenId);
+			if (sockets) sockets.push(socket);
+			else socketsByToken.set(accessTokenId, [socket]);
+		}
+		if (socketsByToken.size === 0) return;
+
+		this.#checkingAccessTokens = true;
+		try {
+			// Redis Pub/Sub does not replay revocations missed during a disconnect.
+			const ids = [...socketsByToken.keys()];
+			const batchSize = 500;
+			for (let i = 0; i < ids.length; i += batchSize) {
+				const batch = ids.slice(i, i + batchSize);
+				const active = await this.accessTokenService.findActiveIds(batch);
+				for (const id of batch) {
+					if (!active.has(id)) {
+						for (const socket of socketsByToken.get(id)!) socket.terminate();
+					}
+				}
+			}
+		} catch (err) {
+			this.apiLoggerService.logger.warn('Failed to check streaming access tokens', { error: err });
+		} finally {
+			this.#checkingAccessTokens = false;
+		}
 	}
 
 	private recheckEnrollment(userId?: string): void {
